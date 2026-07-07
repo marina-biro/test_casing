@@ -1,0 +1,23 @@
+name: Supabase keep-alive
+
+on:
+  schedule:
+    # svakog dana u 06:17 UTC (namerno "ruzan" minut - puni sat je zagusen na GitHubu)
+    - cron: "17 6 * * *"
+  workflow_dispatch: {} # dugme za rucno pokretanje, za test
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/suites?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}")
+          echo "HTTP status: $code"
+          # 200 je ocekivan (RLS vrati prazan niz bez sesije - i to je validna aktivnost)
+          if [ "$code" -ne 200 ]; then
+            echo "Ping nije prosao - proveri projekat/kljuceve"
+            exit 1
+          fi
