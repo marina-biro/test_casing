@@ -21,6 +21,59 @@ function nameFromEmail(email) {
   return local;
 }
 
+// ---------- screenshotovi (Supabase Storage) ----------
+const BUCKET = "screenshots";
+const SIGNED_URL_TTL = 60 * 60 * 24; // 24h
+
+function dataUrlToBlob(dataUrl) {
+  const [meta, b64] = dataUrl.split(",");
+  const mime = (meta.match(/data:(.*?);/) || [])[1] || "image/jpeg";
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+// upload slike -> vraca {path, url}; path se cuva u bazi, url sluzi za prikaz
+export async function uploadScreenshot(dataUrl) {
+  const path = crypto.randomUUID() + ".jpg";
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, dataUrlToBlob(dataUrl), { contentType: "image/jpeg" });
+  if (error) throw error;
+  const { data, error: e2 } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(path, SIGNED_URL_TTL);
+  if (e2) throw e2;
+  return { path, url: data.signedUrl };
+}
+
+// brise fajl iz bucketa; base64 i prazne vrednosti preskace
+export async function deleteScreenshot(path) {
+  if (!path || path.startsWith("data:")) return;
+  const { error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) console.error("Brisanje screenshota nije uspelo:", error);
+}
+
+// za korake ciji je image putanja u bucketu, dodaje imageUrl (potpisan link);
+// stare base64 slike (data:...) ostaju netaknute i dalje rade
+async function withSignedUrls(c) {
+  const paths = (c.steps || [])
+    .filter((s) => s.image && !s.image.startsWith("data:"))
+    .map((s) => s.image);
+  if (paths.length === 0) return c;
+  const { data } = await supabase.storage.from(BUCKET).createSignedUrls(paths, SIGNED_URL_TTL);
+  const urlMap = new Map((data || []).map((d) => [d.path, d.signedUrl]));
+  return {
+    ...c,
+    steps: c.steps.map((s) =>
+      s.image && !s.image.startsWith("data:")
+        ? { ...s, imageUrl: urlMap.get(s.image) || null }
+        : s
+    ),
+  };
+}
+
 // pamti poslednji poznat status po slucaju, da bismo znali kada je
 // promena statusa (i samo tada upisali red u status_history)
 const lastStatus = new Map();
@@ -68,7 +121,8 @@ function caseToRow(c) {
     environment: c.environment || [],
     notes: c.notes,
     actual_result: c.actualResult,
-    steps: c.steps || [],
+    // imageUrl je izveden (potpisan link), ne cuva se - u bazu ide samo putanja
+    steps: (c.steps || []).map(({ imageUrl, ...rest }) => rest),
     status: c.status,
     created_by_name: c.createdBy || null,
   };
@@ -120,7 +174,8 @@ window.storage = {
       if (e2) throw e2;
       if (!row) throw new Error("Key not found: " + key);
       lastStatus.set(row.id, row.status);
-      return { key, value: JSON.stringify(rowToCase(row, hist)), shared: true };
+      const full = await withSignedUrls(rowToCase(row, hist));
+      return { key, value: JSON.stringify(full), shared: true };
     }
 
     throw new Error("Key not found: " + key);
@@ -184,6 +239,15 @@ window.storage = {
   async delete(key) {
     if (key.startsWith("tc-case-")) {
       const id = key.slice("tc-case-".length);
+      // pre brisanja reda, pokupi i obrisi njegove slike iz bucketa
+      const { data: row } = await supabase.from("test_cases").select("steps").eq("id", id).maybeSingle();
+      const paths = (row?.steps || [])
+        .map((s) => s.image)
+        .filter((p) => p && !p.startsWith("data:"));
+      if (paths.length > 0) {
+        const { error: eImg } = await supabase.storage.from(BUCKET).remove(paths);
+        if (eImg) console.error("Brisanje screenshotova nije uspelo:", eImg);
+      }
       const { error } = await supabase.from("test_cases").delete().eq("id", id);
       if (error) throw error;
       lastStatus.delete(id);

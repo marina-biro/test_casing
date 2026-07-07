@@ -3,6 +3,7 @@ import {
   Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
   FolderPlus, X, Clock, User, Save, Check
 } from "lucide-react";
+import { uploadScreenshot, deleteScreenshot } from "./storageShim.js";
 
 // ---------- status config ----------
 const STATUSES = {
@@ -242,7 +243,11 @@ export default function QATestCaseTool() {
   const setStep = (stepId, field, value) =>
     setTc((p) => ({ ...p, steps: p.steps.map((s) => (s.id === stepId ? { ...s, [field]: value } : s)) }));
   const addStep = () => setTc((p) => ({ ...p, steps: [...p.steps, { id: uid(), action: "", expected: "", image: null }] }));
-  const removeStep = (stepId) => setTc((p) => ({ ...p, steps: p.steps.filter((s) => s.id !== stepId) }));
+  const removeStep = (stepId) => {
+    const victim = tc?.steps.find((s) => s.id === stepId);
+    if (victim?.image) deleteScreenshot(victim.image);
+    setTc((p) => ({ ...p, steps: p.steps.filter((s) => s.id !== stepId) }));
+  };
   const moveStep = (i, dir) =>
     setTc((p) => {
       const steps = [...p.steps]; const j = i + dir;
@@ -251,19 +256,34 @@ export default function QATestCaseTool() {
       return { ...p, steps };
     });
 
+  const setStepFields = (stepId, fields) =>
+    setTc((p) => ({ ...p, steps: p.steps.map((s) => (s.id === stepId ? { ...s, ...fields } : s)) }));
+
+  const attachImage = async (stepId, file) => {
+    const dataUrl = await resizeImage(file);
+    const prev = tc?.steps.find((s) => s.id === stepId)?.image;
+    try {
+      const { path, url } = await uploadScreenshot(dataUrl);
+      setStepFields(stepId, { image: path, imageUrl: url });
+      if (prev) deleteScreenshot(prev); // stara slika (ako je bila) ide iz bucketa
+    } catch (err) {
+      // ako upload ne prodje, slika se cuva po starom (base64 u zapisu) da se ne izgubi
+      console.error("Upload screenshota nije uspeo, cuvam base64:", err);
+      setStepFields(stepId, { image: dataUrl, imageUrl: null });
+    }
+  };
+
   const handlePaste = async (e, stepId) => {
     const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
     if (!item) return;
     e.preventDefault();
-    const dataUrl = await resizeImage(item.getAsFile());
-    setStep(stepId, "image", dataUrl);
+    await attachImage(stepId, item.getAsFile());
   };
 
   const handleFile = async (e, stepId) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const dataUrl = await resizeImage(f);
-    setStep(stepId, "image", dataUrl);
+    await attachImage(stepId, f);
     e.target.value = "";
   };
 
@@ -529,14 +549,14 @@ export default function QATestCaseTool() {
                       {s.image && (
                         <div className="mt-2 ml-10 inline-flex items-center gap-1">
                           <button
-                            onMouseEnter={(e) => showPreview(e, s.image)}
-                            onMouseMove={(e) => showPreview(e, s.image)}
+                            onMouseEnter={(e) => showPreview(e, s.imageUrl || s.image)}
+                            onMouseMove={(e) => showPreview(e, s.imageUrl || s.image)}
                             onMouseLeave={hidePreview}
-                            onClick={() => { hidePreview(); setLightbox(s.image); }}
+                            onClick={() => { hidePreview(); setLightbox(s.imageUrl || s.image); }}
                             className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
                             <ImageIcon size={13} /> screenshot
                           </button>
-                          <button onClick={() => setStep(s.id, "image", null)}
+                          <button onClick={() => { deleteScreenshot(s.image); setStepFields(s.id, { image: null, imageUrl: null }); }}
                             className="text-slate-300 hover:text-rose-500 p-0.5" title="Ukloni sliku">
                             <X size={13} />
                           </button>
@@ -658,10 +678,10 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
                             <span className="flex-1">{st.action || "—"}</span>
                             {st.image && (
                               <button
-                                onMouseEnter={(e) => onShowPreview(e, st.image)}
-                                onMouseMove={(e) => onShowPreview(e, st.image)}
+                                onMouseEnter={(e) => onShowPreview(e, st.imageUrl || st.image)}
+                                onMouseMove={(e) => onShowPreview(e, st.imageUrl || st.image)}
                                 onMouseLeave={onHidePreview}
-                                onClick={() => { onHidePreview(); onLightbox(st.image); }}
+                                onClick={() => { onHidePreview(); onLightbox(st.imageUrl || st.image); }}
                                 className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover za pregled">
                                 <ImageIcon size={13} />
                               </button>
