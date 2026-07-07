@@ -7,10 +7,19 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
+export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
 );
+
+// iz emaila ime.prezime@... izvodi prikazno ime "ime.p"
+function nameFromEmail(email) {
+  if (!email) return null;
+  const local = email.split("@")[0];
+  const parts = local.split(".").filter(Boolean);
+  if (parts.length >= 2) return parts[0] + "." + parts[1][0];
+  return local;
+}
 
 // pamti poslednji poznat status po slucaju, da bismo znali kada je
 // promena statusa (i samo tada upisali red u status_history)
@@ -69,9 +78,11 @@ function caseToRow(c) {
 window.storage = {
   async get(key) {
     if (key === "tc-user") {
-      const v = localStorage.getItem("qa-tc:user");
-      if (v === null) throw new Error("Key not found: " + key);
-      return { key, value: v, shared: true };
+      const { data: { user } } = await supabase.auth.getUser();
+      const name = nameFromEmail(user?.email);
+      if (!name) throw new Error("Key not found: " + key);
+      // JSON.stringify jer komponenta vrednosti cita kroz JSON.parse
+      return { key, value: JSON.stringify(name), shared: false };
     }
 
     if (key === "tc-meta") {
@@ -117,7 +128,7 @@ window.storage = {
 
   async set(key, value) {
     if (key === "tc-user") {
-      localStorage.setItem("qa-tc:user", value);
+      // ime je uvek izvedeno iz emaila (ime.p) - rucna izmena nije dozvoljena
       return { key, value, shared: false };
     }
 

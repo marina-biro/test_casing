@@ -273,7 +273,6 @@ export default function QATestCaseTool() {
       return { ...p, environment: has ? p.environment.filter((x) => x !== env) : [...p.environment, env] };
     });
 
-  const saveUser = (name) => { setUserName(name); sSet("tc-user", name); };
 
   // ---------- render ----------
   if (loading) {
@@ -328,14 +327,9 @@ export default function QATestCaseTool() {
             {saved ? <Check size={14} className="text-emerald-500" /> : <Save size={14} className="animate-pulse" />}
             <span>{saved ? "Sačuvano" : "Čuvam…"}</span>
           </div>
-          <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5">
+          <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5" title="Ime je izvedeno iz email naloga">
             <User size={14} className="text-slate-400" />
-            <input
-              className="bg-transparent text-sm outline-none w-32 placeholder-slate-400"
-              placeholder="Tvoje ime…"
-              value={userName}
-              onChange={(e) => saveUser(e.target.value)}
-            />
+            <span className="text-sm text-slate-700 font-mono">{userName || "…"}</span>
           </div>
         </div>
       </header>
