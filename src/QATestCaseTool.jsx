@@ -16,7 +16,7 @@ const STATUSES = {
 
 const ENVIRONMENTS = ["Chrome", "Firefox", "Safari", "Edge", "iPhone", "Android", "LambdaTest", "DEV", "STG", "PROD"];
 
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 
 const fmtTime = (iso) => {
