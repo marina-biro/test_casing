@@ -15,7 +15,7 @@ const STATUSES = {
   blocked:      { label: "Blocked",       dot: "bg-slate-700", chip: "bg-slate-800 text-slate-100 border-slate-700" },
 };
 
-const ENVIRONMENTS = ["Chrome", "Firefox", "Safari", "Edge", "iPhone", "Android", "LambdaTest", "DEV", "STG", "PROD"];
+const ENVIRONMENTS = ["Chrome", "Firefox", "Safari", "Edge", "iPhone", "Android", "Tablet", "API"];
 
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -73,7 +73,7 @@ const emptyCase = (suiteId, seq, by) => {
     postconditions: "",
     environment: [],
     notes: "",
-    steps: [{ id: uid(), action: "", expected: "", image: null }],
+    steps: [{ id: uid(), action: "", testData: "", expected: "", image: null }],
     actualResult: "",
     status: "created",
     createdBy: by,
@@ -100,7 +100,38 @@ export default function QATestCaseTool() {
   const [allCases, setAllCases] = useState(null); // {id: fullCase} for table view
   const [tableLoading, setTableLoading] = useState(false);
   const [hoverPreview, setHoverPreview] = useState(null); // {src, x, y}
-  const [envFilter, setEnvFilter] = useState(""); // "" = svi
+  const [sideQ, setSideQ] = useState("");
+  const [sideW, setSideW] = useState(() => {
+    const v = parseInt(localStorage.getItem("qa-tc:sideW") || "288", 10);
+    return Number.isFinite(v) ? Math.min(560, Math.max(200, v)) : 288;
+  });
+  const sideWRef = useRef(sideW);
+  const startResize = (e) => {
+    e.preventDefault();
+    const move = (ev) => {
+      const w = Math.min(560, Math.max(200, ev.clientX));
+      sideWRef.current = w;
+      setSideW(w);
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      try { localStorage.setItem("qa-tc:sideW", String(sideWRef.current)); } catch {}
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("qa-tc:collapsed") || "[]")); }
+    catch { return new Set(); }
+  });
+  const toggleCollapse = (suiteId) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(suiteId) ? next.delete(suiteId) : next.add(suiteId);
+      try { localStorage.setItem("qa-tc:collapsed", JSON.stringify([...next])); } catch {}
+      return next;
+    });
   const saveTimer = useRef(null);
 
   // load all full cases when switching to table view
@@ -242,7 +273,7 @@ export default function QATestCaseTool() {
   // steps
   const setStep = (stepId, field, value) =>
     setTc((p) => ({ ...p, steps: p.steps.map((s) => (s.id === stepId ? { ...s, [field]: value } : s)) }));
-  const addStep = () => setTc((p) => ({ ...p, steps: [...p.steps, { id: uid(), action: "", expected: "", image: null }] }));
+  const addStep = () => setTc((p) => ({ ...p, steps: [...p.steps, { id: uid(), action: "", testData: "", expected: "", image: null }] }));
   const removeStep = (stepId) => {
     const victim = tc?.steps.find((s) => s.id === stepId);
     if (victim?.image) deleteScreenshot(victim.image);
@@ -303,11 +334,8 @@ export default function QATestCaseTool() {
     );
   }
 
-  const filteredIndex = envFilter
-    ? index.filter((c) => (c.environment || []).includes(envFilter))
-    : index;
-  const casesBySuite = (suiteId) => filteredIndex.filter((c) => c.suiteId === suiteId);
-  const stat = (key) => filteredIndex.filter((c) => c.status === key).length;
+  const casesBySuite = (suiteId) => index.filter((c) => c.suiteId === suiteId);
+  const stat = (key) => index.filter((c) => c.status === key).length;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -327,15 +355,6 @@ export default function QATestCaseTool() {
             Tabela
           </button>
         </div>
-        <select value={envFilter} onChange={(e) => setEnvFilter(e.target.value)}
-          className={`text-xs rounded-lg border px-2 py-1.5 outline-none cursor-pointer ${
-            envFilter ? "border-indigo-400 bg-indigo-50 text-indigo-700 font-medium" : "border-slate-200 bg-white text-slate-500"}`}
-          title="Filter po environmentu">
-          <option value="">Env: svi</option>
-          {ENVIRONMENTS.map((env) => (
-            <option key={env} value={env}>{env}</option>
-          ))}
-        </select>
         <div className="hidden md:flex items-center gap-3 text-xs font-mono text-slate-500 ml-2">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />{stat("pass")}</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-500" />{stat("fail")}</span>
@@ -357,7 +376,7 @@ export default function QATestCaseTool() {
       <div className="flex flex-1 min-h-0">
         {/* sidebar */}
         {view === "editor" && (
-        <aside className="w-72 shrink-0 border-r border-slate-200 bg-white overflow-y-auto">
+        <aside className="shrink-0 border-r border-slate-200 bg-white overflow-y-auto" style={{ width: sideW }}>
           <div className="p-3">
             {!addingSuite ? (
               <button onClick={() => setAddingSuite(true)}
@@ -375,16 +394,47 @@ export default function QATestCaseTool() {
                 <button onClick={() => { setAddingSuite(false); setNewSuiteName(""); }} className="text-slate-400 hover:text-slate-600 px-1" title="Otkaži"><X size={15} /></button>
               </div>
             )}
+            <div className="relative mt-2">
+              <input value={sideQ} onChange={(e) => setSideQ(e.target.value)}
+                placeholder="Pretraga — ID, naziv, funkcionalnost…"
+                className="w-full text-xs border border-slate-200 rounded-lg pl-3 pr-7 py-2 outline-none focus:border-indigo-400" />
+              {sideQ && (
+                <button onClick={() => setSideQ("")}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
           </div>
           {suites.length === 0 && (
             <p className="px-4 py-6 text-sm text-slate-400 text-center leading-relaxed">
               Dodaj prvu funkcionalnost (suite) — npr. „Postavljanje oglasa" ili „Plaćanje" — pa u nju test slučajeve.
             </p>
           )}
-          {suites.map((s) => (
+          {suites.map((s) => {
+            const needle = sideQ.trim().toLowerCase();
+            const suiteMatch = needle && (s.name || "").toLowerCase().includes(needle);
+            let vis = casesBySuite(s.id);
+            if (needle && !suiteMatch) {
+              vis = vis.filter((c) =>
+                (c.caseId || "").toLowerCase().includes(needle) ||
+                (c.title || "").toLowerCase().includes(needle));
+              if (vis.length === 0) return null;
+            }
+            const isCol = collapsed.has(s.id) && !needle; // pretraga gleda i kroz skupljene
+            return (
             <div key={s.id} className="mb-1">
               <div className="group flex items-center px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                <span className="truncate">{s.name}</span>
+                <button onClick={() => toggleCollapse(s.id)}
+                  className="flex items-center gap-1 min-w-0 flex-1 text-left hover:text-slate-700"
+                  title={isCol ? "Otvori" : "Skupi"}>
+                  <ChevronDown size={13}
+                    className={`shrink-0 transition-transform ${isCol ? "-rotate-90" : ""}`} />
+                  <span className="truncate uppercase">{s.name}</span>
+                  {isCol && (
+                    <span className="ml-1 font-mono text-[10px] text-slate-400 normal-case">({vis.length})</span>
+                  )}
+                </button>
                 <button onClick={() => addCase(s.id)} title="Dodaj test slučaj"
                   className="ml-auto opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-800 p-1"><Plus size={14} /></button>
                 <button onClick={() => deleteSuite(s.id)} title={confirmDelete === `suite-${s.id}` ? "Klikni ponovo za brisanje" : "Obriši suite"}
@@ -392,8 +442,9 @@ export default function QATestCaseTool() {
                   {confirmDelete === `suite-${s.id}` ? <span className="text-[10px] font-bold normal-case">Sigurno?</span> : <Trash2 size={13} />}
                 </button>
               </div>
-              {casesBySuite(s.id).map((c) => (
+              {!isCol && vis.map((c) => (
                 <button key={c.id} onClick={() => openCase(c.id)}
+                  title={`${c.caseId} — ${c.title || "Bez naziva"}`}
                   className={`w-full flex items-center gap-2 px-4 py-2 text-left text-sm border-l-2 transition-colors ${
                     selectedId === c.id ? "border-indigo-600 bg-indigo-50/60" : "border-transparent hover:bg-slate-50"}`}>
                   <span className={`w-2 h-2 rounded-full shrink-0 ${STATUSES[c.status]?.dot || "bg-slate-300"}`} />
@@ -401,18 +452,19 @@ export default function QATestCaseTool() {
                   <span className="truncate text-slate-700">{c.title || "Bez naziva"}</span>
                 </button>
               ))}
-              {casesBySuite(s.id).length === 0 && (
-                index.some((c) => c.suiteId === s.id) ? (
-                  <p className="px-6 py-1.5 text-xs text-slate-300 italic">sakriveno filterom</p>
-                ) : (
-                  <button onClick={() => addCase(s.id)} className="w-full px-6 py-1.5 text-left text-xs text-indigo-500 hover:text-indigo-700">
-                    + prvi test slučaj
-                  </button>
-                )
+              {!isCol && vis.length === 0 && (
+                <button onClick={() => addCase(s.id)} className="w-full px-6 py-1.5 text-left text-xs text-indigo-500 hover:text-indigo-700">
+                  + prvi test slučaj
+                </button>
               )}
             </div>
-          ))}
+            );
+          })}
         </aside>
+        )}
+        {view === "editor" && (
+          <div onMouseDown={startResize} title="Prevuci za širinu liste"
+            className="w-1 shrink-0 cursor-col-resize bg-slate-100 hover:bg-indigo-400 active:bg-indigo-500 transition-colors" />
         )}
 
         {/* main */}
@@ -420,7 +472,9 @@ export default function QATestCaseTool() {
           {view === "table" ? (
             <TableView
               suites={suites}
-              index={filteredIndex}
+              index={index}
+              collapsed={collapsed}
+              onToggleCollapse={toggleCollapse}
               allCases={allCases}
               loading={tableLoading}
               onStatusChange={setStatusInTable}
@@ -467,32 +521,6 @@ export default function QATestCaseTool() {
                     </span>
                   )}
                 </div>
-                {tc.createdAt && (
-                  <p className="mt-2 text-xs font-mono text-slate-400">
-                    Kreirao: {tc.createdBy} · {fmtTime(tc.createdAt)}
-                  </p>
-                )}
-                {tc.history?.length > 1 && (
-                  <details className="mt-3">
-                    <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-600">Istorija statusa ({tc.history.length})</summary>
-                    <ul className="mt-2 space-y-1">
-                      {tc.history.map((h, i) => (
-                        <li key={i} className="text-xs font-mono text-slate-500 flex items-center gap-2">
-                          <span className={`w-1.5 h-1.5 rounded-full ${STATUSES[h.status]?.dot}`} />
-                          {STATUSES[h.status]?.label} — {h.by} — {fmtTime(h.at)}
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-              </div>
-
-              {/* meta fields */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Test Objective" value={tc.objective} onChange={(v) => setField("objective", v)} placeholder="Svrha — npr. „Verifikuj uspešan login“" />
-                <Field label="Preconditions" value={tc.preconditions} onChange={(v) => setField("preconditions", v)} placeholder="Preduslovi — npr. „User nalog postoji“" />
-                <Field label="Test Data" value={tc.testData} onChange={(v) => setField("testData", v)} placeholder={"Email: user@test.com\nPass: 123456"} />
-                <Field label="Postconditions" value={tc.postconditions} onChange={(v) => setField("postconditions", v)} placeholder="Stanje posle testa — npr. „Sesija aktivna“" />
               </div>
 
               {/* environment */}
@@ -509,6 +537,10 @@ export default function QATestCaseTool() {
                 </div>
               </div>
 
+              {/* preconditions */}
+              <Field label="Preconditions" value={tc.preconditions} onChange={(v) => setField("preconditions", v)}
+                placeholder="Šta mora da bude ispunjeno pre početka testa — npr. „User nalog postoji“" />
+
               {/* steps */}
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex items-center mb-3">
@@ -524,11 +556,16 @@ export default function QATestCaseTool() {
                           <button onClick={() => moveStep(i, -1)} className="text-slate-300 hover:text-slate-600"><ChevronUp size={14} /></button>
                           <button onClick={() => moveStep(i, 1)} className="text-slate-300 hover:text-slate-600"><ChevronDown size={14} /></button>
                         </div>
-                        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
                           <textarea rows={2} value={s.action}
                             onChange={(e) => setStep(s.id, "action", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder="Akcija — npr. „Unesi email, klikni Login“"
+                            className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-300" />
+                          <textarea rows={2} value={s.testData || ""}
+                            onChange={(e) => setStep(s.id, "testData", e.target.value)}
+                            onPaste={(e) => handlePaste(e, s.id)}
+                            placeholder={"Test data — npr.\nuser@test.com / 123456"}
                             className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-300" />
                           <textarea rows={2} value={s.expected}
                             onChange={(e) => setStep(s.id, "expected", e.target.value)}
@@ -571,11 +608,30 @@ export default function QATestCaseTool() {
                 </button>
               </div>
 
-              {/* actual result + notes */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Actual Result" value={tc.actualResult} onChange={(v) => setField("actualResult", v)} placeholder="Šta se stvarno desilo…" />
-                <Field label="Notes / Comments" value={tc.notes} onChange={(v) => setField("notes", v)} placeholder="Dodatne napomene — npr. „UI spor, attach screenshot“" />
-              </div>
+              {/* actual / post / notes */}
+              <Field label="Actual Result" value={tc.actualResult} onChange={(v) => setField("actualResult", v)}
+                placeholder="Šta se stvarno desilo kada si izvršio test…" />
+              <Field label="Postconditions" value={tc.postconditions} onChange={(v) => setField("postconditions", v)}
+                placeholder="U kakvom je stanju sistem nakon završetka testa…" />
+              <Field label="Notes / Comments" value={tc.notes} onChange={(v) => setField("notes", v)}
+                placeholder="Dodatne napomene — npr. „UI spor, attach screenshot“" />
+
+              {/* istorija statusa - skroz na dnu, sklopiva */}
+              {tc.history?.length > 0 && (
+                <details className="bg-white border border-slate-200 rounded-xl p-4">
+                  <summary className="text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600">
+                    Istorija statusa ({tc.history.length})
+                  </summary>
+                  <ul className="mt-3 space-y-1">
+                    {tc.history.map((h, i) => (
+                      <li key={i} className="text-xs font-mono text-slate-500 flex items-center gap-2">
+                        <span className={`w-1.5 h-1.5 rounded-full ${STATUSES[h.status]?.dot}`} />
+                        {STATUSES[h.status]?.label} — {h.by} — {fmtTime(h.at)}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
         </main>
@@ -612,22 +668,67 @@ function Field({ label, value, onChange, placeholder }) {
   );
 }
 
-const COLS = [
-  ["Test Case ID", "w-28"],
-  ["Test Case", "min-w-[180px]"],
-  ["Test Objective", "min-w-[160px]"],
-  ["Preconditions", "min-w-[150px]"],
-  ["Test Steps", "min-w-[260px]"],
-  ["Test Data", "min-w-[140px]"],
-  ["Expected Result", "min-w-[200px]"],
-  ["Actual Result", "min-w-[150px]"],
-  ["Status", "w-40"],
-  ["Postconditions", "min-w-[140px]"],
-  ["Environment", "min-w-[120px]"],
-  ["Notes", "min-w-[140px]"],
+const COLUMNS = [
+  { key: "caseId",        name: "Test Case ID",    w: "w-28" },
+  { key: "title",         name: "Test Case",       w: "min-w-[180px]" },
+  { key: "preconditions", name: "Preconditions",   w: "min-w-[150px]" },
+  { key: "steps",         name: "Test Steps",      w: "min-w-[240px]" },
+  { key: "testData",      name: "Test Data",       w: "min-w-[160px]" },
+  { key: "expected",      name: "Expected Result", w: "min-w-[200px]" },
+  { key: "actualResult",  name: "Actual Result",   w: "min-w-[150px]" },
+  { key: "status",        name: "Status",          w: "w-40" },
+  { key: "postconditions",name: "Postconditions",  w: "min-w-[140px]" },
+  { key: "environment",   name: "Environment",     w: "min-w-[120px]" },
+  { key: "notes",         name: "Notes",           w: "min-w-[140px]" },
 ];
 
-function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox }) {
+
+
+function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse }) {
+  const [q, setQ] = useState("");
+  const toolbarRef = useRef(null);
+  const [hiddenCols, setHiddenCols] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("qa-tc:hiddenCols") || "[]")); }
+    catch { return new Set(); }
+  });
+  const [colsOpen, setColsOpen] = useState(false);
+  // filter model: null = bez filtera (sve cekirano); Set = tacno ono sto je cekirano (moze i prazan)
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [envFilter, setEnvFilter] = useState(null);
+  const [openPanel, setOpenPanel] = useState(null); // null | "cols" | "status" | "env"
+
+  // klik van trake zatvara otvoreni panel
+  useEffect(() => {
+    if (!openPanel) return;
+    const onDown = (e) => {
+      if (toolbarRef.current && !toolbarRef.current.contains(e.target)) setOpenPanel(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [openPanel]);
+
+  const excelToggle = (prev, key, allKeys) => {
+    let next;
+    if (prev === null) {
+      // "sve cekirano" -> odcekiranje jednog = svi osim njega
+      next = new Set(allKeys);
+      next.delete(key);
+    } else {
+      next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.size === allKeys.length) return null; // sve cekirano = bez filtera
+    }
+    return next;
+  };
+
+  const toggleCol = (key) =>
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      try { localStorage.setItem("qa-tc:hiddenCols", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+
   if (loading || !allCases) {
     return <div className="h-full flex items-center justify-center text-slate-400 text-sm font-mono">Učitavanje tabele…</div>;
   }
@@ -635,96 +736,269 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     return <div className="h-full flex items-center justify-center text-slate-400 text-sm">Nema test slučajeva za prikaz — proveri filter ili dodaj nove.</div>;
   }
 
-  const cellCls = "border border-slate-200 px-3 py-2 text-xs text-slate-700 align-top whitespace-pre-wrap";
+  const cols = COLUMNS.filter((c) => !hiddenCols.has(c.key));
+  const cellCls = "border-x border-slate-200 px-3 py-2 text-xs text-slate-700 align-top whitespace-pre-wrap";
+
+  const STEP_COLS = new Set(["steps", "testData", "expected"]);
+
+  // celije na nivou celog TC-a - protezu se rowSpan-om preko svih koraka
+  const tcCell = (col, c, span, rowCls) => {
+    const cls = `${cellCls} ${rowCls} align-top`;
+    switch (col.key) {
+      case "caseId":
+        return <td key={col.key} rowSpan={span} className={`${cls} font-mono`}>
+          <button onClick={() => onOpenCase(c.id)} className="text-indigo-600 hover:underline">{c.caseId}</button>
+        </td>;
+      case "title":
+        return <td key={col.key} rowSpan={span} className={`${cls} font-medium text-slate-900`}>{c.title || "—"}</td>;
+      case "preconditions":
+        return <td key={col.key} rowSpan={span} className={cls}>{c.preconditions || "—"}</td>;
+      case "actualResult":
+        return <td key={col.key} rowSpan={span} className={cls}>{c.actualResult || "—"}</td>;
+      case "status":
+        return <td key={col.key} rowSpan={span} className={cls}>
+          <select value={c.status} onChange={(e) => onStatusChange(c.id, e.target.value)}
+            className={`w-full text-xs rounded-md border px-1.5 py-1 outline-none cursor-pointer ${STATUSES[c.status]?.chip}`}>
+            {Object.entries(STATUSES).map(([k, cfg]) => (
+              <option key={k} value={k}>{cfg.label}</option>
+            ))}
+          </select>
+          {c.executedAt && (
+            <p className="mt-1 font-mono text-[10px] text-slate-400 leading-tight">
+              {c.executedBy}<br />{fmtTime(c.executedAt)}
+            </p>
+          )}
+        </td>;
+      case "postconditions":
+        return <td key={col.key} rowSpan={span} className={cls}>{c.postconditions || "—"}</td>;
+      case "environment":
+        return <td key={col.key} rowSpan={span} className={cls}>{(c.environment || []).join(", ") || "—"}</td>;
+      case "notes":
+        return <td key={col.key} rowSpan={span} className={cls}>{c.notes || "—"}</td>;
+      default:
+        return null;
+    }
+  };
+
+  // celije na nivou jednog koraka - jedan pod-red po koraku, savrseno poravnato
+  const stepCell = (col, st, i, c, rowCls) => {
+    const cls = `${cellCls} ${rowCls}`;
+    switch (col.key) {
+      case "steps":
+        return <td key={col.key} className={cls}>
+          <span className="flex items-start gap-1.5">
+            <span className="font-mono text-slate-400 shrink-0">{i + 1}.</span>
+            <span className="flex-1">{st.action || "—"}</span>
+            {st.image && (
+              <button
+                onMouseEnter={(e) => onShowPreview(e, st.imageUrl || st.image)}
+                onMouseMove={(e) => onShowPreview(e, st.imageUrl || st.image)}
+                onMouseLeave={onHidePreview}
+                onClick={() => { onHidePreview(); onLightbox(st.imageUrl || st.image); }}
+                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover za pregled">
+                <ImageIcon size={13} />
+              </button>
+            )}
+          </span>
+        </td>;
+      case "testData":
+        return <td key={col.key} className={cls}>{st.testData || (i === 0 ? c.testData : "") || "—"}</td>;
+      case "expected":
+        return <td key={col.key} className={cls}>{st.expected || "—"}</td>;
+      default:
+        return null;
+    }
+  };
 
   return (
-    <div className="p-4 overflow-x-auto">
-      <table className="border-collapse bg-white text-left" style={{ minWidth: "1400px" }}>
-        <thead className="sticky top-0 z-10">
-          <tr>
-            {COLS.map(([name, w]) => (
-              <th key={name} className={`${w} border border-slate-300 bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600`}>
-                {name}
-              </th>
+    <div className="p-4">
+      <div ref={toolbarRef} className="mb-3 flex items-center gap-2 flex-wrap">
+        <FilterButton
+          label="Status"
+          active={statusFilter !== null}
+          open={openPanel === "status"}
+          onToggle={() => setOpenPanel(openPanel === "status" ? null : "status")}>
+          {Object.entries(STATUSES).map(([k, cfg]) => (
+            <label key={k} className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer py-1">
+              <input type="checkbox" checked={statusFilter === null || statusFilter.has(k)}
+                onChange={() => setStatusFilter((p) => excelToggle(p, k, Object.keys(STATUSES)))}
+                className="accent-indigo-600" />
+              <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
+              {cfg.label}
+            </label>
+          ))}
+          <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
+            <button onClick={() => setStatusFilter(null)}
+              className="text-[11px] text-indigo-600 hover:underline">Čekiraj sve</button>
+            <button onClick={() => setStatusFilter(new Set())}
+              className="text-[11px] text-indigo-600 hover:underline">Odčekiraj sve</button>
+          </div>
+        </FilterButton>
+
+        <FilterButton
+          label="Environment"
+          active={envFilter !== null}
+          open={openPanel === "env"}
+          onToggle={() => setOpenPanel(openPanel === "env" ? null : "env")}>
+          {ENVIRONMENTS.map((env) => (
+            <label key={env} className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer py-1">
+              <input type="checkbox" checked={envFilter === null || envFilter.has(env)}
+                onChange={() => setEnvFilter((p) => excelToggle(p, env, ENVIRONMENTS))}
+                className="accent-indigo-600" />
+              {env}
+            </label>
+          ))}
+          <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
+            <button onClick={() => setEnvFilter(null)}
+              className="text-[11px] text-indigo-600 hover:underline">Čekiraj sve</button>
+            <button onClick={() => setEnvFilter(new Set())}
+              className="text-[11px] text-indigo-600 hover:underline">Odčekiraj sve</button>
+          </div>
+        </FilterButton>
+
+        {(statusFilter !== null || envFilter !== null) && (
+          <button onClick={() => { setStatusFilter(null); setEnvFilter(null); }}
+            className="text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2">
+            Poništi filtere
+          </button>
+        )}
+        <div className="relative">
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="Pretraga — ID ili naziv…"
+            className="text-xs border border-slate-200 rounded-lg pl-3 pr-7 py-1.5 w-56 outline-none focus:border-indigo-400 bg-white" />
+          {q && (
+            <button onClick={() => setQ("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div className="ml-auto">
+        <FilterButton
+          align="right"
+          label={`Kolone (${cols.length}/${COLUMNS.length})`}
+          active={hiddenCols.size > 0}
+          open={openPanel === "cols"}
+          onToggle={() => setOpenPanel(openPanel === "cols" ? null : "cols")}>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+            {COLUMNS.map((col) => (
+              <label key={col.key} className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer whitespace-nowrap">
+                <input type="checkbox" checked={!hiddenCols.has(col.key)} onChange={() => toggleCol(col.key)}
+                  className="accent-indigo-600" />
+                {col.name}
+              </label>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {suites.map((s) => {
-            const rows = index.filter((c) => c.suiteId === s.id);
-            if (rows.length === 0) return null;
-            return [
-              <tr key={s.id}>
-                <td colSpan={COLS.length} className="border border-slate-200 bg-indigo-50/70 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-indigo-700">
-                  {s.name}
+          </div>
+        </FilterButton>
+        </div>
+      </div>
+      <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 160px)" }}>
+        <table className="w-full border-collapse bg-white text-left" style={{ minWidth: cols.length > 6 ? "1200px" : "auto" }}>
+          <thead className="sticky top-0 z-10">
+            <tr>
+              {cols.map((col) => (
+                <th key={col.key}
+                  className={`${col.w} border border-slate-300 bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600`}>
+                  {col.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(statusFilter !== null || envFilter !== null || q.trim()) &&
+              !index.some((c) =>
+                (statusFilter === null || statusFilter.has(c.status)) &&
+                (envFilter === null || (c.environment || []).some((e) => envFilter.has(e))) &&
+                (!q.trim() ||
+                  (c.caseId || "").toLowerCase().includes(q.trim().toLowerCase()) ||
+                  (c.title || "").toLowerCase().includes(q.trim().toLowerCase()) ||
+                  (suites.find((s) => s.id === c.suiteId)?.name || "").toLowerCase().includes(q.trim().toLowerCase()))
+              ) && (
+              <tr>
+                <td colSpan={cols.length} className="border border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
+                  Nijedan test slučaj ne prolazi filtere/pretragu — promeni izbor ili očisti pretragu.
                 </td>
-              </tr>,
-              ...rows.map((row) => {
-                const c = allCases[row.id];
-                if (!c) return null;
-                return (
-                  <tr key={c.id} className="hover:bg-slate-50/70">
-                    <td className={`${cellCls} font-mono`}>
-                      <button onClick={() => onOpenCase(c.id)} className="text-indigo-600 hover:underline">{c.caseId}</button>
-                    </td>
-                    <td className={`${cellCls} font-medium text-slate-900`}>{c.title || "—"}</td>
-                    <td className={cellCls}>{c.objective || "—"}</td>
-                    <td className={cellCls}>{c.preconditions || "—"}</td>
-                    <td className={cellCls}>
-                      <ol className="space-y-1 list-none">
-                        {c.steps.map((st, i) => (
-                          <li key={st.id} className="flex items-start gap-1.5">
-                            <span className="font-mono text-slate-400 shrink-0">{i + 1}.</span>
-                            <span className="flex-1">{st.action || "—"}</span>
-                            {st.image && (
-                              <button
-                                onMouseEnter={(e) => onShowPreview(e, st.imageUrl || st.image)}
-                                onMouseMove={(e) => onShowPreview(e, st.imageUrl || st.image)}
-                                onMouseLeave={onHidePreview}
-                                onClick={() => { onHidePreview(); onLightbox(st.imageUrl || st.image); }}
-                                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover za pregled">
-                                <ImageIcon size={13} />
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    </td>
-                    <td className={cellCls}>{c.testData || "—"}</td>
-                    <td className={cellCls}>
-                      <ol className="space-y-1 list-none">
-                        {c.steps.map((st, i) => (
-                          <li key={st.id} className="flex items-start gap-1.5">
-                            <span className="font-mono text-slate-400 shrink-0">{i + 1}.</span>
-                            <span>{st.expected || "—"}</span>
-                          </li>
-                        ))}
-                      </ol>
-                    </td>
-                    <td className={cellCls}>{c.actualResult || "—"}</td>
-                    <td className={`${cellCls}`}>
-                      <select value={c.status} onChange={(e) => onStatusChange(c.id, e.target.value)}
-                        className={`w-full text-xs rounded-md border px-1.5 py-1 outline-none cursor-pointer ${STATUSES[c.status]?.chip}`}>
-                        {Object.entries(STATUSES).map(([k, cfg]) => (
-                          <option key={k} value={k}>{cfg.label}</option>
-                        ))}
-                      </select>
-                      {c.executedAt && (
-                        <p className="mt-1 font-mono text-[10px] text-slate-400 leading-tight">
-                          {c.executedBy}<br />{fmtTime(c.executedAt)}
-                        </p>
-                      )}
-                    </td>
-                    <td className={cellCls}>{c.postconditions || "—"}</td>
-                    <td className={cellCls}>{(c.environment || []).join(", ") || "—"}</td>
-                    <td className={cellCls}>{c.notes || "—"}</td>
-                  </tr>
-                );
-              }),
-            ];
-          })}
-        </tbody>
-      </table>
+              </tr>
+            )}
+            {suites.map((s) => {
+              let rows = index.filter((c) => c.suiteId === s.id);
+              if (statusFilter !== null) {
+                rows = rows.filter((c) => statusFilter.has(c.status));
+              }
+              if (envFilter !== null) {
+                rows = rows.filter((c) => (c.environment || []).some((e) => envFilter.has(e)));
+              }
+              if (q.trim()) {
+                const needle = q.trim().toLowerCase();
+                const suiteMatch = (s.name || "").toLowerCase().includes(needle);
+                if (!suiteMatch) {
+                  rows = rows.filter((c) =>
+                    (c.caseId || "").toLowerCase().includes(needle) ||
+                    (c.title || "").toLowerCase().includes(needle));
+                }
+              }
+              if (rows.length === 0) return null;
+              const isCollapsed = collapsed.has(s.id) && !q.trim(); // pretraga gleda i kroz skupljene
+              return [
+                <tr key={s.id}>
+                  <td colSpan={cols.length}
+                    onClick={() => onToggleCollapse(s.id)}
+                    className="border-x border-slate-200 border-t-2 border-t-slate-300 bg-indigo-50/70 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-indigo-700 cursor-pointer select-none hover:bg-indigo-100/70"
+                    title={isCollapsed ? "Otvori" : "Skupi"}>
+                    <span className="inline-flex items-center gap-1.5">
+                      <ChevronDown size={13} className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                      {s.name}
+                      <span className="font-mono text-[10px] text-indigo-400 normal-case">({rows.length})</span>
+                    </span>
+                  </td>
+                </tr>,
+                ...(isCollapsed ? [] : [
+                rows.flatMap((row, tcIdx) => {
+                  const c = allCases[row.id];
+                  if (!c) return [];
+                  const steps = c.steps && c.steps.length > 0
+                    ? c.steps
+                    : [{ id: "none", action: "", testData: "", expected: "", image: null }];
+                  const zebra = tcIdx % 2 === 1 ? "bg-slate-50" : "bg-white";
+                  return steps.map((st, i) => {
+                    // deblja linija na pocetku TC-a, tanja svetlija izmedju koraka
+                    const topCls = i === 0 ? "border-t-2 border-t-slate-300" : "border-t border-t-slate-200/60";
+                    const rowCls = `${zebra} ${topCls}`;
+                    return (
+                      <tr key={`${c.id}-${st.id}`}>
+                        {cols.map((col) =>
+                          STEP_COLS.has(col.key)
+                            ? stepCell(col, st, i, c, rowCls)
+                            : i === 0
+                              ? tcCell(col, c, steps.length, rowCls)
+                              : null)}
+                      </tr>
+                    );
+                  });
+                })]),
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FilterButton({ label, active, open, onToggle, children, align = "left" }) {
+  return (
+    <div className="relative">
+      <button onClick={onToggle}
+        className={`text-xs border rounded-lg px-3 py-1.5 ${
+          active ? "border-indigo-400 bg-indigo-50 text-indigo-700 font-medium"
+                 : "border-slate-200 bg-white text-slate-600 hover:border-indigo-300"}`}>
+        {label} {active ? "▾●" : "▾"}
+      </button>
+      {open && (
+        <div className={`absolute top-9 ${align === "right" ? "right-0" : "left-0"} z-30 bg-white border border-slate-200 rounded-xl shadow-lg p-3 min-w-[180px] w-max max-w-[320px]`}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
