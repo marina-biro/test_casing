@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
-  FolderPlus, X, Clock, User, Save, Check
+  FolderPlus, X, Clock, User, Save, Check, Printer
 } from "lucide-react";
 import { uploadScreenshot, deleteScreenshot } from "./storageShim.js";
 
@@ -755,6 +756,7 @@ const COLUMNS = [
 function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse }) {
   const [q, setQ] = useState("");
   const [taskQ, setTaskQ] = useState("");
+  const [printGroups, setPrintGroups] = useState(null);
   const toolbarRef = useRef(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem("qa-tc:hiddenCols") || "[]")); }
@@ -831,6 +833,43 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     return true;
   };
   const anyFilterActive = statusFilter !== null || envFilter !== null || q.trim() || taskQ.trim();
+
+  // ---------- izvoz u PDF (print-to-PDF) ----------
+  const exportPdf = async () => {
+    const groups = suites
+      .map((s) => ({
+        suite: s,
+        cases: index.filter((c) => c.suiteId === s.id).filter(passes)
+          .map((c) => allCases[c.id]).filter(Boolean),
+      }))
+      .filter((g) => g.cases.length > 0);
+    if (groups.length === 0) return;
+
+    // sacekaj da se slike ucitaju pre otvaranja print dijaloga
+    const urls = [];
+    groups.forEach((g) => g.cases.forEach((c) => {
+      (c.steps || []).forEach((st) => {
+        const u = st.imageUrl || (st.image?.startsWith("data:") ? st.image : null);
+        if (u) urls.push(u);
+      });
+      const au = c.actualResultImageUrl || (c.actualResultImage?.startsWith("data:") ? c.actualResultImage : null);
+      if (au) urls.push(au);
+    }));
+    await Promise.all(urls.map((u) => new Promise((res) => {
+      const im = new Image();
+      im.onload = im.onerror = res;
+      im.src = u;
+      setTimeout(res, 4000); // ne cekaj zauvek
+    })));
+
+    document.body.classList.add("tc-printing");
+    setPrintGroups(groups);
+    setTimeout(() => {
+      window.print();
+      document.body.classList.remove("tc-printing");
+      setPrintGroups(null);
+    }, 400);
+  };
   const cellCls = "border-x border-slate-200 px-3 py-2 text-xs text-slate-800 align-top whitespace-pre-wrap";
 
   const STEP_COLS = new Set(["steps", "testData", "expected"]);
@@ -968,18 +1007,6 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           </div>
         </FilterButton>
 
-        <div className="relative">
-          <input value={taskQ} onChange={(e) => setTaskQ(e.target.value)}
-            placeholder="Task — npr. PA-1234"
-            className={`text-xs border rounded-lg pl-3 pr-7 py-1.5 w-36 font-mono outline-none focus:border-indigo-400 ${
-              taskQ ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`} />
-          {taskQ && (
-            <button onClick={() => setTaskQ("")}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
-              <X size={13} />
-            </button>
-          )}
-        </div>
         {(statusFilter !== null || envFilter !== null || taskQ) && (
           <button onClick={() => { setStatusFilter(null); setEnvFilter(null); setTaskQ(""); }}
             className="text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2">
@@ -997,7 +1024,24 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             </button>
           )}
         </div>
-        <div className="ml-auto">
+        <button onClick={exportPdf}
+          title="Izvoz onoga sto trenutno prolazi filtere"
+          className="text-xs border border-slate-200 bg-white rounded-lg px-3 py-1.5 text-slate-600 hover:border-indigo-300 flex items-center gap-1.5">
+          <Printer size={13} /> PDF
+        </button>
+        <div className="ml-auto flex items-center gap-2">
+        <div className="relative">
+          <input value={taskQ} onChange={(e) => setTaskQ(e.target.value)}
+            placeholder="Task — npr. PA-1234"
+            className={`text-xs border rounded-lg pl-3 pr-7 py-1.5 w-36 font-mono outline-none focus:border-indigo-400 ${
+              taskQ ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`} />
+          {taskQ && (
+            <button onClick={() => setTaskQ("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X size={13} />
+            </button>
+          )}
+        </div>
         <FilterButton
           align="right"
           label={`Kolone (${cols.length}/${COLUMNS.length})`}
@@ -1016,6 +1060,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         </FilterButton>
         </div>
       </div>
+      {printGroups && createPortal(<PrintReport groups={printGroups} />, document.body)}
       <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 160px)" }}>
         <table className="w-full border-collapse bg-white text-left" style={{ minWidth: cols.length > 6 ? "1200px" : "auto" }}>
           <thead className="sticky top-0 z-10">
@@ -1100,6 +1145,118 @@ function FilterButton({ label, active, open, onToggle, children, align = "left" 
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+function PrintReport({ groups }) {
+  const today = fmtTime(new Date().toISOString());
+  const allCasesFlat = groups.flatMap((g) => g.cases.map((c) => ({ ...c, _suite: g.suite.name })));
+  const imgSrc = (path, url) => url || (path && path.startsWith("data:") ? path : null);
+
+  return (
+    <div className="tc-print-report">
+      <style>{`
+        .tc-print-report { display: none; }
+        @media print {
+          body.tc-printing #root { display: none !important; }
+          body.tc-printing .tc-print-report { display: block !important; }
+          .tc-print-report { font-family: system-ui, sans-serif; color: #1e293b; font-size: 11px; }
+          .tc-print-report h1 { font-size: 18px; margin: 0 0 2px; }
+          .tc-print-report .sub { color: #64748b; font-size: 10px; margin-bottom: 14px; }
+          .tc-print-report h2 { font-size: 13px; margin: 16px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: #4338ca; }
+          .tc-print-report table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+          .tc-print-report th, .tc-print-report td { border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; vertical-align: top; }
+          .tc-print-report th { background: #f1f5f9; font-size: 10px; text-transform: uppercase; }
+          .tc-print-report .summary { page-break-after: always; }
+          .tc-print-report .tc-block { break-inside: avoid; page-break-inside: avoid; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
+          .tc-print-report .tc-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+          .tc-print-report .tc-id { font-family: monospace; color: #4338ca; font-weight: bold; }
+          .tc-print-report .tc-title { font-size: 13px; font-weight: 600; }
+          .tc-print-report .badge { font-size: 10px; border: 1px solid #94a3b8; border-radius: 999px; padding: 1px 8px; }
+          .tc-print-report .meta { color: #475569; margin: 2px 0; }
+          .tc-print-report img.thumb { max-height: 110px; max-width: 100%; border: 1px solid #cbd5e1; border-radius: 4px; display: block; margin-top: 3px; }
+          .tc-print-report .hist { color: #64748b; font-family: monospace; font-size: 10px; margin: 1px 0; }
+        }
+      `}</style>
+
+      <h1>Test Case Report</h1>
+      <p className="sub">Generisano: {today}</p>
+
+      <div className="summary">
+        <h2>Pregled scenarija</h2>
+        <table>
+          <thead>
+            <tr><th>Funkcionalnost</th><th>ID</th><th>Naziv</th><th>Status</th><th>Poslednja promena</th></tr>
+          </thead>
+          <tbody>
+            {allCasesFlat.map((c) => (
+              <tr key={c.id}>
+                <td>{c._suite}</td>
+                <td style={{ fontFamily: "monospace" }}>{c.caseId}</td>
+                <td>{c.title || "—"}</td>
+                <td>{STATUSES[c.status]?.label || c.status}</td>
+                <td style={{ fontFamily: "monospace", fontSize: "10px" }}>
+                  {c.executedBy || "—"}{c.history?.[0]?.task ? ` · ${c.history[0].task}` : ""}{c.executedAt ? ` · ${fmtTime(c.executedAt)}` : ""}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {groups.map((g) => (
+        <div key={g.suite.id}>
+          <h2>{g.suite.name}</h2>
+          {g.cases.map((c) => (
+            <div key={c.id} className="tc-block">
+              <div className="tc-head">
+                <span><span className="tc-id">{c.caseId}</span>{"  "}<span className="tc-title">{c.title || "Bez naziva"}</span></span>
+                <span className="badge">{STATUSES[c.status]?.label || c.status}</span>
+              </div>
+              {c.history?.[0]?.task && <p className="meta"><b>Task:</b> {c.history[0].task}</p>}
+              {(c.environment || []).length > 0 && <p className="meta"><b>Environment:</b> {c.environment.join(", ")}</p>}
+              {c.preconditions && <p className="meta"><b>Preconditions:</b> {c.preconditions}</p>}
+
+              {(c.steps || []).some((st) => st.action || st.expected || st.testData || st.image) && (
+                <table>
+                  <thead>
+                    <tr><th style={{ width: "18px" }}>#</th><th>Akcija</th><th>Test data</th><th>Expected</th></tr>
+                  </thead>
+                  <tbody>
+                    {c.steps.map((st, i) => (
+                      <tr key={st.id}>
+                        <td style={{ fontFamily: "monospace" }}>{i + 1}</td>
+                        <td>
+                          {st.action || "—"}
+                          {imgSrc(st.image, st.imageUrl) && <img className="thumb" src={imgSrc(st.image, st.imageUrl)} alt="" />}
+                        </td>
+                        <td>{st.testData || "—"}</td>
+                        <td>{st.expected || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              {(c.actualResult || c.actualResultImage) && (
+                <p className="meta"><b>Actual Result:</b> {c.actualResult || ""}
+                  {imgSrc(c.actualResultImage, c.actualResultImageUrl) && <img className="thumb" src={imgSrc(c.actualResultImage, c.actualResultImageUrl)} alt="" />}
+                </p>
+              )}
+              {c.postconditions && <p className="meta"><b>Postconditions:</b> {c.postconditions}</p>}
+              {c.notes && <p className="meta"><b>Notes:</b> {c.notes}</p>}
+              {(c.history || []).length > 0 && (
+                <div style={{ marginTop: "4px" }}>
+                  {c.history.map((h, i) => (
+                    <p key={i} className="hist">{STATUSES[h.status]?.label || h.status} — {h.by}{h.task ? ` — ${h.task}` : ""} — {fmtTime(h.at)}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
