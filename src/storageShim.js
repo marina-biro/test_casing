@@ -58,9 +58,11 @@ export async function deleteScreenshot(path) {
 // za korake ciji je image putanja u bucketu, dodaje imageUrl (potpisan link);
 // stare base64 slike (data:...) ostaju netaknute i dalje rade
 async function withSignedUrls(c) {
-  const paths = (c.steps || [])
+  const stepPaths = (c.steps || [])
     .filter((s) => s.image && !s.image.startsWith("data:"))
     .map((s) => s.image);
+  const arPath = c.actualResultImage && !c.actualResultImage.startsWith("data:") ? [c.actualResultImage] : [];
+  const paths = [...stepPaths, ...arPath];
   if (paths.length === 0) return c;
   const { data } = await supabase.storage.from(BUCKET).createSignedUrls(paths, SIGNED_URL_TTL);
   const urlMap = new Map((data || []).map((d) => [d.path, d.signedUrl]));
@@ -71,6 +73,7 @@ async function withSignedUrls(c) {
         ? { ...s, imageUrl: urlMap.get(s.image) || null }
         : s
     ),
+    actualResultImageUrl: arPath.length ? urlMap.get(c.actualResultImage) || null : null,
   };
 }
 
@@ -98,6 +101,7 @@ function rowToCase(row, historyRows) {
     environment: row.environment || [],
     notes: row.notes || "",
     actualResult: row.actual_result || "",
+    actualResultImage: row.actual_result_image || null,
     steps: row.steps || [],
     status: row.status,
     createdBy: row.created_by_name,
@@ -121,6 +125,7 @@ function caseToRow(c) {
     environment: c.environment || [],
     notes: c.notes,
     actual_result: c.actualResult,
+    actual_result_image: c.actualResultImage || null,
     // imageUrl je izveden (potpisan link), ne cuva se - u bazu ide samo putanja
     steps: (c.steps || []).map(({ imageUrl, ...rest }) => rest),
     status: c.status,
@@ -240,9 +245,8 @@ window.storage = {
     if (key.startsWith("tc-case-")) {
       const id = key.slice("tc-case-".length);
       // pre brisanja reda, pokupi i obrisi njegove slike iz bucketa
-      const { data: row } = await supabase.from("test_cases").select("steps").eq("id", id).maybeSingle();
-      const paths = (row?.steps || [])
-        .map((s) => s.image)
+      const { data: row } = await supabase.from("test_cases").select("steps,actual_result_image").eq("id", id).maybeSingle();
+      const paths = [...(row?.steps || []).map((s) => s.image), row?.actual_result_image]
         .filter((p) => p && !p.startsWith("data:"));
       if (paths.length > 0) {
         const { error: eImg } = await supabase.storage.from(BUCKET).remove(paths);

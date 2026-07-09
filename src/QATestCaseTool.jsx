@@ -75,6 +75,7 @@ const emptyCase = (suiteId, seq, by) => {
     notes: "",
     steps: [{ id: uid(), action: "", testData: "", expected: "", image: null }],
     actualResult: "",
+    actualResultImage: null,
     status: "created",
     createdBy: by,
     createdAt: at,
@@ -304,6 +305,26 @@ export default function QATestCaseTool() {
     }
   };
 
+  const attachActualImage = async (file) => {
+    const dataUrl = await resizeImage(file);
+    const prev = tc?.actualResultImage;
+    try {
+      const { path, url } = await uploadScreenshot(dataUrl);
+      setTc((p) => ({ ...p, actualResultImage: path, actualResultImageUrl: url }));
+      if (prev) deleteScreenshot(prev);
+    } catch (err) {
+      console.error("Upload screenshota nije uspeo, cuvam base64:", err);
+      setTc((p) => ({ ...p, actualResultImage: dataUrl, actualResultImageUrl: null }));
+    }
+  };
+
+  const handleActualPaste = async (e) => {
+    const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
+    if (!item) return;
+    e.preventDefault();
+    await attachActualImage(item.getAsFile());
+  };
+
   const handlePaste = async (e, stepId) => {
     const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
     if (!item) return;
@@ -492,10 +513,10 @@ export default function QATestCaseTool() {
               {/* title row */}
               <div className="flex items-start gap-3">
                 <input
-                  className="font-mono text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 w-32 focus:border-indigo-400 outline-none"
+                  className="font-mono text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 w-32 focus:border-indigo-400 outline-none"
                   value={tc.caseId} onChange={(e) => setField("caseId", e.target.value)} placeholder="TC_001" />
                 <input
-                  className="flex-1 text-lg font-semibold bg-white border border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none placeholder-slate-300"
+                  className="flex-1 text-lg font-semibold bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none placeholder-slate-400 placeholder:italic"
                   value={tc.title} onChange={(e) => setField("title", e.target.value)}
                   placeholder='Naziv — npr. „Login sa validnim kredencijalima"' />
                 <button onClick={() => deleteCase(tc.id)} title={confirmDelete === `case-${tc.id}` ? "Klikni ponovo za brisanje" : "Obriši"}
@@ -525,7 +546,7 @@ export default function QATestCaseTool() {
 
               {/* environment */}
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Test Environment</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Test Environment</p>
                 <div className="flex flex-wrap gap-2">
                   {ENVIRONMENTS.map((env) => (
                     <button key={env} onClick={() => toggleEnv(env)}
@@ -538,13 +559,13 @@ export default function QATestCaseTool() {
               </div>
 
               {/* preconditions */}
-              <Field label="Preconditions" value={tc.preconditions} onChange={(v) => setField("preconditions", v)}
-                placeholder="Šta mora da bude ispunjeno pre početka testa — npr. „User nalog postoji“" />
+              <Field label="Preconditions" hint="šta mora da bude ispunjeno pre početka testa"
+                value={tc.preconditions} onChange={(v) => setField("preconditions", v)} />
 
               {/* steps */}
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex items-center mb-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Test Steps</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Test Steps</p>
                   <p className="ml-auto text-xs text-slate-400">Screenshot: Ctrl+V direktno u polje koraka</p>
                 </div>
                 <div className="space-y-3">
@@ -561,17 +582,17 @@ export default function QATestCaseTool() {
                             onChange={(e) => setStep(s.id, "action", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder="Akcija — npr. „Unesi email, klikni Login“"
-                            className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-300" />
+                            className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                           <textarea rows={2} value={s.testData || ""}
                             onChange={(e) => setStep(s.id, "testData", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder={"Test data — npr.\nuser@test.com / 123456"}
-                            className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-300" />
+                            className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                           <textarea rows={2} value={s.expected}
                             onChange={(e) => setStep(s.id, "expected", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder="Expected — npr. „Redirect na dashboard“"
-                            className="text-sm bg-white border border-slate-200 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-300" />
+                            className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                         </div>
                         <div className="flex flex-col gap-1 items-end">
                           <label className="cursor-pointer text-slate-400 hover:text-indigo-600 p-1" title="Dodaj sliku">
@@ -609,17 +630,35 @@ export default function QATestCaseTool() {
               </div>
 
               {/* actual / post / notes */}
-              <Field label="Actual Result" value={tc.actualResult} onChange={(v) => setField("actualResult", v)}
-                placeholder="Šta se stvarno desilo kada si izvršio test…" />
-              <Field label="Postconditions" value={tc.postconditions} onChange={(v) => setField("postconditions", v)}
-                placeholder="U kakvom je stanju sistem nakon završetka testa…" />
-              <Field label="Notes / Comments" value={tc.notes} onChange={(v) => setField("notes", v)}
-                placeholder="Dodatne napomene — npr. „UI spor, attach screenshot“" />
+              <Field label="Actual Result" hint="šta se stvarno desilo — screenshot ide sa Ctrl+V"
+                value={tc.actualResult} onChange={(v) => setField("actualResult", v)}
+                onPaste={handleActualPaste}>
+                {tc.actualResultImage && (
+                  <div className="mt-2 inline-flex items-center gap-1">
+                    <button
+                      onMouseEnter={(e) => showPreview(e, tc.actualResultImageUrl || tc.actualResultImage)}
+                      onMouseMove={(e) => showPreview(e, tc.actualResultImageUrl || tc.actualResultImage)}
+                      onMouseLeave={hidePreview}
+                      onClick={() => { hidePreview(); setLightbox(tc.actualResultImageUrl || tc.actualResultImage); }}
+                      className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
+                      <ImageIcon size={13} /> screenshot
+                    </button>
+                    <button onClick={() => { deleteScreenshot(tc.actualResultImage); setTc((p) => ({ ...p, actualResultImage: null, actualResultImageUrl: null })); }}
+                      className="text-slate-300 hover:text-rose-500 p-0.5" title="Ukloni sliku">
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
+              </Field>
+              <Field label="Postconditions" hint="u kakvom je stanju sistem nakon završetka testa"
+                value={tc.postconditions} onChange={(v) => setField("postconditions", v)} />
+              <Field label="Notes / Comments" hint="dodatne napomene, zapažanja, linkovi"
+                value={tc.notes} onChange={(v) => setField("notes", v)} />
 
               {/* istorija statusa - skroz na dnu, sklopiva */}
               {tc.history?.length > 0 && (
                 <details className="bg-white border border-slate-200 rounded-xl p-4">
-                  <summary className="text-xs font-semibold uppercase tracking-wider text-slate-400 cursor-pointer hover:text-slate-600">
+                  <summary className="text-xs font-semibold uppercase tracking-wider text-slate-500 cursor-pointer hover:text-slate-700">
                     Istorija statusa ({tc.history.length})
                   </summary>
                   <ul className="mt-3 space-y-1">
@@ -658,12 +697,17 @@ export default function QATestCaseTool() {
   );
 }
 
-function Field({ label, value, onChange, placeholder }) {
+function Field({ label, hint, value, onChange, placeholder, onPaste, children }) {
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4">
-      <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">{label}</p>
+      <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+        {label}
+        {hint && <span className="normal-case font-normal tracking-normal text-slate-400"> — {hint}</span>}
+      </p>
       <textarea rows={2} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full text-sm bg-transparent outline-none resize-y placeholder-slate-300" />
+        onPaste={onPaste}
+        className="w-full text-sm text-slate-800 bg-transparent outline-none resize-y placeholder-slate-400 placeholder:italic" />
+      {children}
     </div>
   );
 }
@@ -737,7 +781,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
   }
 
   const cols = COLUMNS.filter((c) => !hiddenCols.has(c.key));
-  const cellCls = "border-x border-slate-200 px-3 py-2 text-xs text-slate-700 align-top whitespace-pre-wrap";
+  const cellCls = "border-x border-slate-200 px-3 py-2 text-xs text-slate-800 align-top whitespace-pre-wrap";
 
   const STEP_COLS = new Set(["steps", "testData", "expected"]);
 
@@ -754,7 +798,21 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
       case "preconditions":
         return <td key={col.key} rowSpan={span} className={cls}>{c.preconditions || "—"}</td>;
       case "actualResult":
-        return <td key={col.key} rowSpan={span} className={cls}>{c.actualResult || "—"}</td>;
+        return <td key={col.key} rowSpan={span} className={cls}>
+          <span className="flex items-start gap-1.5">
+            <span className="flex-1">{c.actualResult || "—"}</span>
+            {c.actualResultImage && (
+              <button
+                onMouseEnter={(e) => onShowPreview(e, c.actualResultImageUrl || c.actualResultImage)}
+                onMouseMove={(e) => onShowPreview(e, c.actualResultImageUrl || c.actualResultImage)}
+                onMouseLeave={onHidePreview}
+                onClick={() => { onHidePreview(); onLightbox(c.actualResultImageUrl || c.actualResultImage); }}
+                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover za pregled">
+                <ImageIcon size={13} />
+              </button>
+            )}
+          </span>
+        </td>;
       case "status":
         return <td key={col.key} rowSpan={span} className={cls}>
           <select value={c.status} onChange={(e) => onStatusChange(c.id, e.target.value)}
@@ -764,7 +822,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             ))}
           </select>
           {c.executedAt && (
-            <p className="mt-1 font-mono text-[10px] text-slate-400 leading-tight">
+            <p className="mt-1 font-mono text-[10px] text-slate-500 leading-tight">
               {c.executedBy}<br />{fmtTime(c.executedAt)}
             </p>
           )}
@@ -787,7 +845,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
       case "steps":
         return <td key={col.key} className={cls}>
           <span className="flex items-start gap-1.5">
-            <span className="font-mono text-slate-400 shrink-0">{i + 1}.</span>
+            <span className="font-mono text-slate-500 shrink-0">{i + 1}.</span>
             <span className="flex-1">{st.action || "—"}</span>
             {st.image && (
               <button
@@ -898,7 +956,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             <tr>
               {cols.map((col) => (
                 <th key={col.key}
-                  className={`${col.w} border border-slate-300 bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-600`}>
+                  className={`${col.w} border border-slate-300 bg-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-700`}>
                   {col.name}
                 </th>
               ))}
