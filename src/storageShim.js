@@ -87,6 +87,7 @@ function rowToCase(row, historyRows) {
     status: h.status,
     by: h.changed_by_name,
     at: h.changed_at,
+    task: h.task || null,
   }));
   const latest = history[0] || null;
   return {
@@ -101,6 +102,7 @@ function rowToCase(row, historyRows) {
     environment: row.environment || [],
     notes: row.notes || "",
     actualResult: row.actual_result || "",
+    task: row.task || null,
     actualResultImage: row.actual_result_image || null,
     steps: row.steps || [],
     status: row.status,
@@ -125,6 +127,7 @@ function caseToRow(c) {
     environment: c.environment || [],
     notes: c.notes,
     actual_result: c.actualResult,
+    task: c.task || null,
     actual_result_image: c.actualResultImage || null,
     // imageUrl je izveden (potpisan link), ne cuva se - u bazu ide samo putanja
     steps: (c.steps || []).map(({ imageUrl, ...rest }) => rest),
@@ -142,6 +145,12 @@ window.storage = {
       if (!name) throw new Error("Key not found: " + key);
       // JSON.stringify jer komponenta vrednosti cita kroz JSON.parse
       return { key, value: JSON.stringify(name), shared: false };
+    }
+
+    if (key === "tc-task") {
+      const { data: { user } } = await supabase.auth.getUser();
+      const v = user?.user_metadata?.active_task || "";
+      return { key, value: JSON.stringify(v), shared: false };
     }
 
     if (key === "tc-meta") {
@@ -172,7 +181,7 @@ window.storage = {
       const [{ data: row, error: e1 }, { data: hist, error: e2 }] =
         await Promise.all([
           supabase.from("test_cases").select("*").eq("id", id).maybeSingle(),
-          supabase.from("status_history").select("status,changed_by_name,changed_at")
+          supabase.from("status_history").select("status,changed_by_name,changed_at,task")
             .eq("test_case_id", id).order("changed_at", { ascending: false }).limit(20),
         ]);
       if (e1) throw e1;
@@ -189,6 +198,11 @@ window.storage = {
   async set(key, value) {
     if (key === "tc-user") {
       // ime je uvek izvedeno iz emaila (ime.p) - rucna izmena nije dozvoljena
+      return { key, value, shared: false };
+    }
+
+    if (key === "tc-task") {
+      await supabase.auth.updateUser({ data: { active_task: JSON.parse(value) } });
       return { key, value, shared: false };
     }
 
@@ -231,6 +245,7 @@ window.storage = {
           status: c.status,
           changed_by_name: latest.by || null,
           changed_at: latest.at || new Date().toISOString(),
+          task: latest.task || null,
         });
         if (e2) throw e2;
         lastStatus.set(c.id, c.status);

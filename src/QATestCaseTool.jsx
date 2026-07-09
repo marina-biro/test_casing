@@ -60,7 +60,7 @@ const sSet = async (key, val) => {
 };
 const sDel = async (key) => { try { await window.storage.delete(key); } catch {} };
 
-const emptyCase = (suiteId, seq, by) => {
+const emptyCase = (suiteId, seq, by, task) => {
   const at = now();
   return {
     id: uid(),
@@ -76,18 +76,20 @@ const emptyCase = (suiteId, seq, by) => {
     steps: [{ id: uid(), action: "", testData: "", expected: "", image: null }],
     actualResult: "",
     actualResultImage: null,
+    task: task || null,
     status: "created",
     createdBy: by,
     createdAt: at,
     executedBy: by,
     executedAt: at,
-    history: [{ status: "created", by, at }],
+    history: [{ status: "created", by, at, task: task || null }],
   };
 };
 
 export default function QATestCaseTool() {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
+  const [task, setTask] = useState(""); // aktivan Jira task
   const [suites, setSuites] = useState([]);
   const [index, setIndex] = useState([]); // [{id, suiteId, caseId, title, status}]
   const [selectedId, setSelectedId] = useState(null);
@@ -151,7 +153,7 @@ export default function QATestCaseTool() {
     const by = userName.trim() || "nepoznat korisnik";
     const at = now();
     const updated = { ...full, status, executedBy: by, executedAt: at,
-      history: [{ status, by, at }, ...(full.history || [])].slice(0, 20) };
+      history: [{ status, by, at, task: task.trim() || null }, ...(full.history || [])].slice(0, 20) };
     setAllCases((p) => ({ ...p, [id]: updated }));
     await sSet(`tc-case-${id}`, updated);
     setIndex((prev) => {
@@ -175,8 +177,9 @@ export default function QATestCaseTool() {
   // ---------- initial load ----------
   useEffect(() => {
     (async () => {
-      const [u, meta] = await Promise.all([sGet("tc-user"), sGet("tc-meta")]);
+      const [u, meta, tk] = await Promise.all([sGet("tc-user"), sGet("tc-meta"), sGet("tc-task")]);
       if (u) setUserName(u);
+      if (tk) setTask(tk);
       if (meta) {
         let cases = meta.cases || [];
         // migration: older index entries don't carry environment — backfill from full cases
@@ -238,7 +241,7 @@ export default function QATestCaseTool() {
   };
 
   const addCase = async (suiteId) => {
-    const fresh = emptyCase(suiteId, index.length + 1, userName.trim() || "nepoznat korisnik");
+    const fresh = emptyCase(suiteId, index.length + 1, userName.trim() || "nepoznat korisnik", task.trim() || null);
     await sSet(`tc-case-${fresh.id}`, fresh);
     const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [] }];
     setIndex(nextI); persistMeta(suites, nextI);
@@ -262,12 +265,18 @@ export default function QATestCaseTool() {
 
   const setField = (field, value) => setTc((p) => ({ ...p, [field]: value }));
 
+  const saveTask = () => {
+    const norm = task.trim().toUpperCase().replace(/\s+/g, "-");
+    setTask(norm);
+    sSet("tc-task", norm);
+  };
+
   const setStatus = (status) => {
     const by = userName.trim() || "nepoznat korisnik";
     const at = now();
     setTc((p) => ({
       ...p, status, executedBy: by, executedAt: at,
-      history: [{ status, by, at }, ...(p.history || [])].slice(0, 20),
+      history: [{ status, by, at, task: task.trim() || null }, ...(p.history || [])].slice(0, 20),
     }));
   };
 
@@ -386,6 +395,20 @@ export default function QATestCaseTool() {
           <div className="flex items-center gap-1.5 text-xs text-slate-400">
             {saved ? <Check size={14} className="text-emerald-500" /> : <Save size={14} className="animate-pulse" />}
             <span>{saved ? "Sačuvano" : "Čuvam…"}</span>
+          </div>
+          <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5"
+            title="Aktivan Jira task — automatski se upisuje na nove TC-ove i promene statusa">
+            <span className="text-xs font-mono text-slate-400">Task</span>
+            <input value={task}
+              onChange={(e) => setTask(e.target.value)}
+              onBlur={saveTask}
+              onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+              placeholder="PA-1234"
+              className="bg-transparent text-sm font-mono outline-none w-24 placeholder-slate-400 placeholder:italic" />
+            {task && (
+              <button onClick={() => { setTask(""); sSet("tc-task", ""); }}
+                className="text-slate-300 hover:text-slate-500" title="Očisti task"><X size={13} /></button>
+            )}
           </div>
           <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5" title="Ime je izvedeno iz email naloga">
             <User size={14} className="text-slate-400" />
@@ -538,7 +561,7 @@ export default function QATestCaseTool() {
                   {tc.executedAt && (
                     <span className="ml-auto flex items-center gap-1.5 text-xs font-mono text-slate-500">
                       <Clock size={13} />
-                      {STATUSES[tc.status].label} · {tc.executedBy} · {fmtTime(tc.executedAt)}
+                      {STATUSES[tc.status].label} · {tc.executedBy}{tc.history?.[0]?.task ? ` · ${tc.history[0].task}` : ""} · {fmtTime(tc.executedAt)}
                     </span>
                   )}
                 </div>
@@ -665,7 +688,7 @@ export default function QATestCaseTool() {
                     {tc.history.map((h, i) => (
                       <li key={i} className="text-xs font-mono text-slate-500 flex items-center gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full ${STATUSES[h.status]?.dot}`} />
-                        {STATUSES[h.status]?.label} — {h.by} — {fmtTime(h.at)}
+                        {STATUSES[h.status]?.label} — {h.by}{h.task ? ` — ${h.task}` : ""} — {fmtTime(h.at)}
                       </li>
                     ))}
                   </ul>
@@ -721,6 +744,7 @@ const COLUMNS = [
   { key: "expected",      name: "Expected Result", w: "min-w-[200px]" },
   { key: "actualResult",  name: "Actual Result",   w: "min-w-[150px]" },
   { key: "status",        name: "Status",          w: "w-40" },
+  { key: "task",          name: "Task",            w: "w-28" },
   { key: "postconditions",name: "Postconditions",  w: "min-w-[140px]" },
   { key: "environment",   name: "Environment",     w: "min-w-[120px]" },
   { key: "notes",         name: "Notes",           w: "min-w-[140px]" },
@@ -730,6 +754,7 @@ const COLUMNS = [
 
 function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse }) {
   const [q, setQ] = useState("");
+  const [taskQ, setTaskQ] = useState("");
   const toolbarRef = useRef(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem("qa-tc:hiddenCols") || "[]")); }
@@ -781,6 +806,31 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
   }
 
   const cols = COLUMNS.filter((c) => !hiddenCols.has(c.key));
+
+  // da li TC prolazi sve aktivne filtere; task se trazi kroz CELU istoriju
+  const passes = (c) => {
+    if (statusFilter !== null && !statusFilter.has(c.status)) return false;
+    if (envFilter !== null && !(c.environment || []).some((e) => envFilter.has(e))) return false;
+    const full = allCases[c.id] || {};
+    if (taskQ.trim()) {
+      const tn = taskQ.trim().toUpperCase();
+      const hit = (full.task || "").toUpperCase().includes(tn) ||
+        (full.history || []).some((h) => (h.task || "").toUpperCase().includes(tn));
+      if (!hit) return false;
+    }
+    if (q.trim()) {
+      const needle = q.trim().toLowerCase();
+      const suiteName = (suites.find((s) => s.id === c.suiteId)?.name || "").toLowerCase();
+      const hit = (c.caseId || "").toLowerCase().includes(needle) ||
+        (c.title || "").toLowerCase().includes(needle) ||
+        suiteName.includes(needle) ||
+        (full.task || "").toLowerCase().includes(needle) ||
+        (full.history || []).some((h) => (h.task || "").toLowerCase().includes(needle));
+      if (!hit) return false;
+    }
+    return true;
+  };
+  const anyFilterActive = statusFilter !== null || envFilter !== null || q.trim() || taskQ.trim();
   const cellCls = "border-x border-slate-200 px-3 py-2 text-xs text-slate-800 align-top whitespace-pre-wrap";
 
   const STEP_COLS = new Set(["steps", "testData", "expected"]);
@@ -823,10 +873,14 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           </select>
           {c.executedAt && (
             <p className="mt-1 font-mono text-[10px] text-slate-500 leading-tight">
-              {c.executedBy}<br />{fmtTime(c.executedAt)}
+              {c.executedBy}{c.history?.[0]?.task ? ` · ${c.history[0].task}` : ""}<br />{fmtTime(c.executedAt)}
             </p>
           )}
         </td>;
+      case "task": {
+        const lastTask = c.history?.[0]?.task || c.task || null;
+        return <td key={col.key} rowSpan={span} className={`${cls} font-mono`}>{lastTask || "—"}</td>;
+      }
       case "postconditions":
         return <td key={col.key} rowSpan={span} className={cls}>{c.postconditions || "—"}</td>;
       case "environment":
@@ -914,8 +968,20 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           </div>
         </FilterButton>
 
-        {(statusFilter !== null || envFilter !== null) && (
-          <button onClick={() => { setStatusFilter(null); setEnvFilter(null); }}
+        <div className="relative">
+          <input value={taskQ} onChange={(e) => setTaskQ(e.target.value)}
+            placeholder="Task — npr. PA-1234"
+            className={`text-xs border rounded-lg pl-3 pr-7 py-1.5 w-36 font-mono outline-none focus:border-indigo-400 ${
+              taskQ ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`} />
+          {taskQ && (
+            <button onClick={() => setTaskQ("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        {(statusFilter !== null || envFilter !== null || taskQ) && (
+          <button onClick={() => { setStatusFilter(null); setEnvFilter(null); setTaskQ(""); }}
             className="text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2">
             Poništi filtere
           </button>
@@ -963,15 +1029,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             </tr>
           </thead>
           <tbody>
-            {(statusFilter !== null || envFilter !== null || q.trim()) &&
-              !index.some((c) =>
-                (statusFilter === null || statusFilter.has(c.status)) &&
-                (envFilter === null || (c.environment || []).some((e) => envFilter.has(e))) &&
-                (!q.trim() ||
-                  (c.caseId || "").toLowerCase().includes(q.trim().toLowerCase()) ||
-                  (c.title || "").toLowerCase().includes(q.trim().toLowerCase()) ||
-                  (suites.find((s) => s.id === c.suiteId)?.name || "").toLowerCase().includes(q.trim().toLowerCase()))
-              ) && (
+            {anyFilterActive && !index.some(passes) && (
               <tr>
                 <td colSpan={cols.length} className="border border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
                   Nijedan test slučaj ne prolazi filtere/pretragu — promeni izbor ili očisti pretragu.
@@ -979,24 +1037,9 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
               </tr>
             )}
             {suites.map((s) => {
-              let rows = index.filter((c) => c.suiteId === s.id);
-              if (statusFilter !== null) {
-                rows = rows.filter((c) => statusFilter.has(c.status));
-              }
-              if (envFilter !== null) {
-                rows = rows.filter((c) => (c.environment || []).some((e) => envFilter.has(e)));
-              }
-              if (q.trim()) {
-                const needle = q.trim().toLowerCase();
-                const suiteMatch = (s.name || "").toLowerCase().includes(needle);
-                if (!suiteMatch) {
-                  rows = rows.filter((c) =>
-                    (c.caseId || "").toLowerCase().includes(needle) ||
-                    (c.title || "").toLowerCase().includes(needle));
-                }
-              }
+              const rows = index.filter((c) => c.suiteId === s.id).filter(passes);
               if (rows.length === 0) return null;
-              const isCollapsed = collapsed.has(s.id) && !q.trim(); // pretraga gleda i kroz skupljene
+              const isCollapsed = collapsed.has(s.id) && !q.trim() && !taskQ.trim(); // pretraga/task gledaju i kroz skupljene
               return [
                 <tr key={s.id}>
                   <td colSpan={cols.length}
