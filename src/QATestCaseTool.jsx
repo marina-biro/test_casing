@@ -91,6 +91,8 @@ export default function QATestCaseTool() {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
   const [task, setTask] = useState(""); // aktivan Jira task
+  const [role, setRole] = useState("qa"); // "qa" | sve ostalo = samo citanje
+  const canEdit = role === "qa";
   const [suites, setSuites] = useState([]);
   const [index, setIndex] = useState([]); // [{id, suiteId, caseId, title, status}]
   const [selectedId, setSelectedId] = useState(null);
@@ -154,6 +156,7 @@ export default function QATestCaseTool() {
 
   // change status directly from the table (persists + records author/time)
   const setStatusInTable = async (id, status) => {
+    if (!canEdit) return;
     const full = allCases?.[id];
     if (!full) return;
     const by = userName.trim() || "nepoznat korisnik";
@@ -226,9 +229,11 @@ export default function QATestCaseTool() {
   // ---------- initial load ----------
   useEffect(() => {
     (async () => {
-      const [u, meta, tk] = await Promise.all([sGet("tc-user"), sGet("tc-meta"), sGet("tc-task")]);
+      const [u, meta, tk, rl] = await Promise.all([sGet("tc-user"), sGet("tc-meta"), sGet("tc-task"), sGet("tc-role")]);
       if (u) setUserName(u);
       if (tk) setTask(tk);
+      const resolvedRole = rl || "viewer";
+      setRole(resolvedRole);
       if (meta) {
         let cases = meta.cases || [];
         // migration: older index entries don't carry environment — backfill from full cases
@@ -243,7 +248,14 @@ export default function QATestCaseTool() {
         setIndex(cases);
       }
       setLoading(false);
-      setTimeout(() => applyUrlRef.current(), 0);
+      setTimeout(() => {
+        const p = new URLSearchParams(window.location.search);
+        if (resolvedRole !== "qa" && !p.get("view") && !p.get("tc")) {
+          openTable(); // viewer bez linka slece na tabelu, ne na prazan editor
+        } else {
+          applyUrlRef.current();
+        }
+      }, 0);
     })();
   }, []);
 
@@ -253,7 +265,7 @@ export default function QATestCaseTool() {
 
   // ---------- debounced save of open case ----------
   useEffect(() => {
-    if (!tc) return;
+    if (!tc || !canEdit) return;
     setSaved(false);
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
@@ -322,6 +334,7 @@ export default function QATestCaseTool() {
   };
 
   const setStatus = (status) => {
+    if (!canEdit) return;
     const by = userName.trim() || "nepoznat korisnik";
     const at = now();
     setTc((p) => ({
@@ -442,10 +455,15 @@ export default function QATestCaseTool() {
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-700" />{stat("blocked")}</span>
         </div>
         <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            {saved ? <Check size={14} className="text-emerald-500" /> : <Save size={14} className="animate-pulse" />}
-            <span>{saved ? "Sačuvano" : "Čuvam…"}</span>
-          </div>
+          {canEdit ? (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              {saved ? <Check size={14} className="text-emerald-500" /> : <Save size={14} className="animate-pulse" />}
+              <span>{saved ? "Sačuvano" : "Čuvam…"}</span>
+            </div>
+          ) : (
+            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-1">samo pregled</span>
+          )}
+          {canEdit && (
           <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5"
             title="Aktivan Jira task — automatski se upisuje na nove TC-ove i promene statusa">
             <span className="text-xs font-mono text-slate-400">Task</span>
@@ -460,6 +478,7 @@ export default function QATestCaseTool() {
                 className="text-slate-300 hover:text-slate-500" title="Očisti task"><X size={13} /></button>
             )}
           </div>
+          )}
           <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5" title="Ime je izvedeno iz email naloga">
             <User size={14} className="text-slate-400" />
             <span className="text-sm text-slate-700 font-mono">{userName || "…"}</span>
@@ -472,7 +491,7 @@ export default function QATestCaseTool() {
         {view === "editor" && (
         <aside className="shrink-0 border-r border-slate-200 bg-white overflow-y-auto" style={{ width: sideW }}>
           <div className="p-3">
-            {!addingSuite ? (
+            {canEdit && (!addingSuite ? (
               <button onClick={() => setAddingSuite(true)}
                 className="w-full flex items-center justify-center gap-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 transition-colors">
                 <FolderPlus size={15} /> Nova funkcionalnost
@@ -487,7 +506,7 @@ export default function QATestCaseTool() {
                 <button onClick={addSuite} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2.5" title="Dodaj"><Check size={15} /></button>
                 <button onClick={() => { setAddingSuite(false); setNewSuiteName(""); }} className="text-slate-400 hover:text-slate-600 px-1" title="Otkaži"><X size={15} /></button>
               </div>
-            )}
+            ))}
             <div className="relative mt-2">
               <input value={sideQ} onChange={(e) => setSideQ(e.target.value)}
                 placeholder="Pretraga — ID, naziv, funkcionalnost…"
@@ -529,12 +548,16 @@ export default function QATestCaseTool() {
                     <span className="ml-1 font-mono text-[10px] text-slate-400 normal-case">({vis.length})</span>
                   )}
                 </button>
+                {canEdit && (
                 <button onClick={() => addCase(s.id)} title="Dodaj test slučaj"
                   className="ml-auto opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-800 p-1"><Plus size={14} /></button>
+                )}
+                {canEdit && (
                 <button onClick={() => deleteSuite(s.id)} title={confirmDelete === `suite-${s.id}` ? "Klikni ponovo za brisanje" : "Obriši suite"}
                   className={`p-1 ${confirmDelete === `suite-${s.id}` ? "opacity-100 text-rose-600" : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600"}`}>
                   {confirmDelete === `suite-${s.id}` ? <span className="text-[10px] font-bold normal-case">Sigurno?</span> : <Trash2 size={13} />}
                 </button>
+                )}
               </div>
               {!isCol && vis.map((c) => (
                 <button key={c.id} onClick={() => openCase(c.id)}
@@ -546,7 +569,7 @@ export default function QATestCaseTool() {
                   <span className="truncate text-slate-700">{c.title || "Bez naziva"}</span>
                 </button>
               ))}
-              {!isCol && vis.length === 0 && (
+              {!isCol && vis.length === 0 && canEdit && (
                 <button onClick={() => addCase(s.id)} className="w-full px-6 py-1.5 text-left text-xs text-indigo-500 hover:text-indigo-700">
                   + prvi test slučaj
                 </button>
@@ -569,6 +592,7 @@ export default function QATestCaseTool() {
               index={index}
               collapsed={collapsed}
               onToggleCollapse={toggleCollapse}
+              canEdit={canEdit}
               q={q} setQ={setQ}
               taskQ={taskQ} setTaskQ={setTaskQ}
               statusFilter={statusFilter} setStatusFilter={setStatusFilter}
@@ -591,22 +615,24 @@ export default function QATestCaseTool() {
               <div className="flex items-start gap-3">
                 <input
                   className="font-mono text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 w-32 focus:border-indigo-400 outline-none"
-                  value={tc.caseId} onChange={(e) => setField("caseId", e.target.value)} placeholder="TC_001" />
+                  value={tc.caseId} onChange={(e) => setField("caseId", e.target.value)} placeholder="TC_001" readOnly={!canEdit} />
                 <input
                   className="flex-1 text-lg font-semibold bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none placeholder-slate-400 placeholder:italic"
                   value={tc.title} onChange={(e) => setField("title", e.target.value)}
-                  placeholder='Naziv — npr. „Login sa validnim kredencijalima"' />
+                  placeholder='Naziv — npr. „Login sa validnim kredencijalima"' readOnly={!canEdit} />
+                {canEdit && (
                 <button onClick={() => deleteCase(tc.id)} title={confirmDelete === `case-${tc.id}` ? "Klikni ponovo za brisanje" : "Obriši"}
                   className={`p-2.5 rounded-lg border ${confirmDelete === `case-${tc.id}` ? "bg-rose-50 border-rose-300 text-rose-600 text-xs font-semibold" : "text-slate-400 hover:text-rose-600 bg-white border-slate-200"}`}>
                   {confirmDelete === `case-${tc.id}` ? "Sigurno?" : <Trash2 size={16} />}
                 </button>
+                )}
               </div>
 
               {/* status bar */}
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   {Object.entries(STATUSES).map(([key, cfg]) => (
-                    <button key={key} onClick={() => setStatus(key)}
+                    <button key={key} onClick={() => setStatus(key)} disabled={!canEdit}
                       className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
                         tc.status === key ? cfg.chip + " ring-2 ring-offset-1 ring-indigo-300" : "bg-white text-slate-400 border-slate-200 hover:border-slate-300"}`}>
                       {cfg.label}
@@ -626,7 +652,7 @@ export default function QATestCaseTool() {
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Test Environment</p>
                 <div className="flex flex-wrap gap-2">
                   {ENVIRONMENTS.map((env) => (
-                    <button key={env} onClick={() => toggleEnv(env)}
+                    <button key={env} onClick={() => canEdit && toggleEnv(env)}
                       className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
                         tc.environment.includes(env) ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-slate-500 border-slate-200 hover:border-indigo-300"}`}>
                       {env}
@@ -637,7 +663,7 @@ export default function QATestCaseTool() {
 
               {/* preconditions */}
               <Field label="Preconditions" hint="šta mora da bude ispunjeno pre početka testa"
-                value={tc.preconditions} onChange={(v) => setField("preconditions", v)} />
+                value={tc.preconditions} onChange={(v) => setField("preconditions", v)} readOnly={!canEdit} />
 
               {/* steps */}
               <div className="bg-white border border-slate-200 rounded-xl p-4">
@@ -651,34 +677,38 @@ export default function QATestCaseTool() {
                       <div className="flex gap-3">
                         <div className="flex flex-col items-center gap-1 pt-1">
                           <span className="font-mono text-xs font-bold text-indigo-600 bg-indigo-50 rounded-md w-7 h-7 flex items-center justify-center">{i + 1}</span>
-                          <button onClick={() => moveStep(i, -1)} className="text-slate-300 hover:text-slate-600"><ChevronUp size={14} /></button>
-                          <button onClick={() => moveStep(i, 1)} className="text-slate-300 hover:text-slate-600"><ChevronDown size={14} /></button>
+                          {canEdit && <button onClick={() => moveStep(i, -1)} className="text-slate-300 hover:text-slate-600"><ChevronUp size={14} /></button>}
+                          {canEdit && <button onClick={() => moveStep(i, 1)} className="text-slate-300 hover:text-slate-600"><ChevronDown size={14} /></button>}
                         </div>
                         <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
-                          <textarea rows={2} value={s.action}
+                          <textarea rows={2} readOnly={!canEdit} value={s.action}
                             onChange={(e) => setStep(s.id, "action", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder="Akcija — npr. „Unesi email, klikni Login“"
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
-                          <textarea rows={2} value={s.testData || ""}
+                          <textarea rows={2} readOnly={!canEdit} value={s.testData || ""}
                             onChange={(e) => setStep(s.id, "testData", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder={"Test data — npr.\nuser@test.com / 123456"}
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
-                          <textarea rows={2} value={s.expected}
+                          <textarea rows={2} readOnly={!canEdit} value={s.expected}
                             onChange={(e) => setStep(s.id, "expected", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id)}
                             placeholder="Expected — npr. „Redirect na dashboard“"
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                         </div>
                         <div className="flex flex-col gap-1 items-end">
+                          {canEdit && (
                           <label className="cursor-pointer text-slate-400 hover:text-indigo-600 p-1" title="Dodaj sliku">
                             <ImageIcon size={16} />
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e, s.id)} />
                           </label>
+                          )}
+                          {canEdit && (
                           <button onClick={() => removeStep(s.id)} className="text-slate-300 hover:text-rose-500 p-1" title="Obriši korak">
                             <X size={15} />
                           </button>
+                          )}
                         </div>
                       </div>
                       {s.image && (
@@ -691,25 +721,29 @@ export default function QATestCaseTool() {
                             className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
                             <ImageIcon size={13} /> screenshot
                           </button>
+                          {canEdit && (
                           <button onClick={() => { deleteScreenshot(s.image); setStepFields(s.id, { image: null, imageUrl: null }); }}
                             className="text-slate-300 hover:text-rose-500 p-0.5" title="Ukloni sliku">
                             <X size={13} />
                           </button>
+                          )}
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
+                {canEdit && (
                 <button onClick={addStep}
                   className="mt-3 flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium">
                   <Plus size={15} /> Dodaj korak
                 </button>
+                )}
               </div>
 
               {/* actual / post / notes */}
               <Field label="Actual Result" hint="šta se stvarno desilo — screenshot ide sa Ctrl+V"
                 value={tc.actualResult} onChange={(v) => setField("actualResult", v)}
-                onPaste={handleActualPaste}>
+                onPaste={canEdit ? handleActualPaste : undefined} readOnly={!canEdit}>
                 {tc.actualResultImage && (
                   <div className="mt-2 inline-flex items-center gap-1">
                     <button
@@ -720,17 +754,19 @@ export default function QATestCaseTool() {
                       className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
                       <ImageIcon size={13} /> screenshot
                     </button>
+                    {canEdit && (
                     <button onClick={() => { deleteScreenshot(tc.actualResultImage); setTc((p) => ({ ...p, actualResultImage: null, actualResultImageUrl: null })); }}
                       className="text-slate-300 hover:text-rose-500 p-0.5" title="Ukloni sliku">
                       <X size={13} />
                     </button>
+                    )}
                   </div>
                 )}
               </Field>
               <Field label="Postconditions" hint="u kakvom je stanju sistem nakon završetka testa"
-                value={tc.postconditions} onChange={(v) => setField("postconditions", v)} />
+                value={tc.postconditions} onChange={(v) => setField("postconditions", v)} readOnly={!canEdit} />
               <Field label="Notes / Comments" hint="dodatne napomene, zapažanja, linkovi"
-                value={tc.notes} onChange={(v) => setField("notes", v)} />
+                value={tc.notes} onChange={(v) => setField("notes", v)} readOnly={!canEdit} />
 
               {/* istorija statusa - skroz na dnu, sklopiva */}
               {tc.history?.length > 0 && (
@@ -770,7 +806,7 @@ export default function QATestCaseTool() {
   );
 }
 
-function Field({ label, hint, value, onChange, placeholder, onPaste, children }) {
+function Field({ label, hint, value, onChange, placeholder, onPaste, children, readOnly }) {
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-4">
       <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
@@ -778,7 +814,7 @@ function Field({ label, hint, value, onChange, placeholder, onPaste, children })
         {hint && <span className="normal-case font-normal tracking-normal text-slate-400"> — {hint}</span>}
       </p>
       <textarea rows={2} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        onPaste={onPaste}
+        onPaste={onPaste} readOnly={readOnly}
         className="w-full text-sm text-slate-800 bg-transparent outline-none resize-y placeholder-slate-400 placeholder:italic" />
       {children}
     </div>
@@ -803,7 +839,7 @@ const COLUMNS = [
 
 
 function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse,
-  q, setQ, taskQ, setTaskQ, statusFilter, setStatusFilter, envFilter, setEnvFilter }) {
+  canEdit, q, setQ, taskQ, setTaskQ, statusFilter, setStatusFilter, envFilter, setEnvFilter }) {
   const [printGroups, setPrintGroups] = useState(null);
   const toolbarRef = useRef(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
@@ -949,12 +985,18 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         </td>;
       case "status":
         return <td key={col.key} rowSpan={span} className={cls}>
+          {canEdit ? (
           <select value={c.status} onChange={(e) => onStatusChange(c.id, e.target.value)}
             className={`w-full text-xs rounded-md border px-1.5 py-1 outline-none cursor-pointer ${STATUSES[c.status]?.chip}`}>
             {Object.entries(STATUSES).map(([k, cfg]) => (
               <option key={k} value={k}>{cfg.label}</option>
             ))}
           </select>
+          ) : (
+          <span className={`inline-block text-xs rounded-md border px-1.5 py-1 ${STATUSES[c.status]?.chip}`}>
+            {STATUSES[c.status]?.label || c.status}
+          </span>
+          )}
           {c.executedAt && (
             <p className="mt-1 font-mono text-[10px] text-slate-500 leading-tight">
               {c.executedBy}{c.history?.[0]?.task ? ` · ${c.history[0].task}` : ""}<br />{fmtTime(c.executedAt)}

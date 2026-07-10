@@ -153,6 +153,16 @@ window.storage = {
       return { key, value: JSON.stringify(v), shared: false };
     }
 
+    if (key === "tc-role") {
+      const { data: { user } } = await supabase.auth.getUser();
+      let role = "viewer";
+      if (user) {
+        const { data } = await supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle();
+        role = data?.role || "viewer";
+      }
+      return { key, value: JSON.stringify(role), shared: false };
+    }
+
     if (key === "tc-meta") {
       const [{ data: suites, error: e1 }, { data: cases, error: e2 }] =
         await Promise.all([
