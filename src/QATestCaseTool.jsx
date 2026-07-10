@@ -146,12 +146,19 @@ export default function QATestCaseTool() {
   const saveTimer = useRef(null);
 
   // load all full cases when switching to table view
-  const openTable = async () => {
+  // items parametar sprečava stale closure tokom inicijalnog učitavanja:
+  // prvi render još uvek ima prazan index, iako je meta upravo učitan.
+  const openTable = async (items = index) => {
     setView("table");
     setTableLoading(true);
-    const entries = await Promise.all(index.map(async (c) => [c.id, await sGet(`tc-case-${c.id}`)]));
-    setAllCases(Object.fromEntries(entries.filter(([, v]) => v)));
-    setTableLoading(false);
+    try {
+      const entries = await Promise.all(
+        items.map(async (c) => [c.id, await sGet(`tc-case-${c.id}`)])
+      );
+      setAllCases(Object.fromEntries(entries.filter(([, v]) => v)));
+    } finally {
+      setTableLoading(false);
+    }
   };
 
   // change status directly from the table (persists + records author/time)
@@ -234,6 +241,7 @@ export default function QATestCaseTool() {
       if (tk) setTask(tk);
       const resolvedRole = rl || "viewer";
       setRole(resolvedRole);
+      let loadedCases = [];
       if (meta) {
         let cases = meta.cases || [];
         // migration: older index entries don't carry environment — backfill from full cases
@@ -244,6 +252,7 @@ export default function QATestCaseTool() {
           cases = cases.map((c) => ("environment" in c ? c : { ...c, environment: envMap[c.id] || [] }));
           sSet("tc-meta", { suites: meta.suites || [], cases });
         }
+        loadedCases = cases;
         setSuites(meta.suites || []);
         setIndex(cases);
       }
@@ -251,7 +260,9 @@ export default function QATestCaseTool() {
       setTimeout(() => {
         const p = new URLSearchParams(window.location.search);
         if (resolvedRole !== "qa" && !p.get("view") && !p.get("tc")) {
-          openTable(); // viewer bez linka slece na tabelu, ne na prazan editor
+          // Prosleđujemo upravo učitane slučajeve direktno, umesto da koristimo
+          // index iz stale closure-a prvog rendera.
+          openTable(loadedCases);
         } else {
           applyUrlRef.current();
         }
