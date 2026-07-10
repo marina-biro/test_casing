@@ -35,13 +35,13 @@ const resizeImage = (file) =>
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 1000;
+        const MAX = 1600;
         let { width, height } = img;
         if (width > MAX) { height = Math.round((height * MAX) / width); width = MAX; }
         const canvas = document.createElement("canvas");
         canvas.width = width; canvas.height = height;
         canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", 0.72));
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
       };
       img.onerror = reject;
       img.src = e.target.result;
@@ -101,6 +101,11 @@ export default function QATestCaseTool() {
   const [newSuiteName, setNewSuiteName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [view, setView] = useState("editor"); // "editor" | "table"
+  // filteri tabele zive ovde: prezivljavaju Editor<->Tabela i upisuju se u URL (deljivi linkovi)
+  const [q, setQ] = useState("");
+  const [taskQ, setTaskQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState(null); // null = bez filtera; Set = cekirano
+  const [envFilter, setEnvFilter] = useState(null);
   const [allCases, setAllCases] = useState(null); // {id: fullCase} for table view
   const [tableLoading, setTableLoading] = useState(false);
   const [hoverPreview, setHoverPreview] = useState(null); // {src, x, y}
@@ -168,6 +173,49 @@ export default function QATestCaseTool() {
   const showPreview = (e, src) => setHoverPreview({ src, x: e.clientX, y: e.clientY });
   const hidePreview = () => setHoverPreview(null);
 
+  // ---------- URL <-> stanje: deljivi linkovi + browser Back ----------
+  const applyUrlRef = useRef(() => {});
+  applyUrlRef.current = () => {
+    const p = new URLSearchParams(window.location.search);
+    const st = p.get("status");
+    setStatusFilter(st ? new Set(st.split(",").filter(Boolean)) : null);
+    const en = p.get("env");
+    setEnvFilter(en ? new Set(en.split(",").filter(Boolean)) : null);
+    setTaskQ(p.get("task") || "");
+    setQ(p.get("q") || "");
+    if (p.get("view") === "table") {
+      openTable();
+    } else {
+      setView("editor");
+      const tcId = p.get("tc");
+      if (tcId) openCase(tcId);
+    }
+  };
+  useEffect(() => {
+    const onPop = () => applyUrlRef.current();
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const prevViewRef = useRef(view);
+  useEffect(() => {
+    if (loading) return;
+    const p = new URLSearchParams();
+    if (view === "table") p.set("view", "table");
+    if (statusFilter !== null) p.set("status", [...statusFilter].join(","));
+    if (envFilter !== null) p.set("env", [...envFilter].join(","));
+    if (taskQ.trim()) p.set("task", taskQ.trim());
+    if (q.trim()) p.set("q", q.trim());
+    if (view === "editor" && selectedId) p.set("tc", selectedId);
+    const qs = p.toString();
+    const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (url === window.location.pathname + window.location.search) return;
+    // promena prikaza ide u istoriju (radi Back), promene filtera samo azuriraju URL
+    if (prevViewRef.current !== view) window.history.pushState(null, "", url);
+    else window.history.replaceState(null, "", url);
+    prevViewRef.current = view;
+  }, [view, selectedId, q, taskQ, statusFilter, envFilter, loading]);
+
   // auto-reset delete confirmation after 3s
   useEffect(() => {
     if (!confirmDelete) return;
@@ -195,6 +243,7 @@ export default function QATestCaseTool() {
         setIndex(cases);
       }
       setLoading(false);
+      setTimeout(() => applyUrlRef.current(), 0);
     })();
   }, []);
 
@@ -520,6 +569,10 @@ export default function QATestCaseTool() {
               index={index}
               collapsed={collapsed}
               onToggleCollapse={toggleCollapse}
+              q={q} setQ={setQ}
+              taskQ={taskQ} setTaskQ={setTaskQ}
+              statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+              envFilter={envFilter} setEnvFilter={setEnvFilter}
               allCases={allCases}
               loading={tableLoading}
               onStatusChange={setStatusInTable}
@@ -712,11 +765,7 @@ export default function QATestCaseTool() {
       )}
 
       {/* lightbox */}
-      {lightbox && (
-        <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-6 cursor-zoom-out" onClick={() => setLightbox(null)}>
-          <img src={lightbox} alt="Screenshot" className="max-w-full max-h-full rounded-xl shadow-2xl" />
-        </div>
-      )}
+      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }
@@ -753,9 +802,8 @@ const COLUMNS = [
 
 
 
-function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse }) {
-  const [q, setQ] = useState("");
-  const [taskQ, setTaskQ] = useState("");
+function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse,
+  q, setQ, taskQ, setTaskQ, statusFilter, setStatusFilter, envFilter, setEnvFilter }) {
   const [printGroups, setPrintGroups] = useState(null);
   const toolbarRef = useRef(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
@@ -763,9 +811,6 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     catch { return new Set(); }
   });
   const [colsOpen, setColsOpen] = useState(false);
-  // filter model: null = bez filtera (sve cekirano); Set = tacno ono sto je cekirano (moze i prazan)
-  const [statusFilter, setStatusFilter] = useState(null);
-  const [envFilter, setEnvFilter] = useState(null);
   const [openPanel, setOpenPanel] = useState(null); // null | "cols" | "status" | "env"
 
   // klik van trake zatvara otvoreni panel
@@ -885,11 +930,11 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
       case "title":
         return <td key={col.key} rowSpan={span} className={`${cls} font-medium text-slate-900`}>{c.title || "—"}</td>;
       case "preconditions":
-        return <td key={col.key} rowSpan={span} className={cls}>{c.preconditions || "—"}</td>;
+        return <td key={col.key} rowSpan={span} className={cls}><Linkified text={c.preconditions} /></td>;
       case "actualResult":
         return <td key={col.key} rowSpan={span} className={cls}>
           <span className="flex items-start gap-1.5">
-            <span className="flex-1">{c.actualResult || "—"}</span>
+            <span className="flex-1"><Linkified text={c.actualResult} /></span>
             {c.actualResultImage && (
               <button
                 onMouseEnter={(e) => onShowPreview(e, c.actualResultImageUrl || c.actualResultImage)}
@@ -921,11 +966,11 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         return <td key={col.key} rowSpan={span} className={`${cls} font-mono`}>{lastTask || "—"}</td>;
       }
       case "postconditions":
-        return <td key={col.key} rowSpan={span} className={cls}>{c.postconditions || "—"}</td>;
+        return <td key={col.key} rowSpan={span} className={cls}><Linkified text={c.postconditions} /></td>;
       case "environment":
         return <td key={col.key} rowSpan={span} className={cls}>{(c.environment || []).join(", ") || "—"}</td>;
       case "notes":
-        return <td key={col.key} rowSpan={span} className={cls}>{c.notes || "—"}</td>;
+        return <td key={col.key} rowSpan={span} className={cls}><Linkified text={c.notes} /></td>;
       default:
         return null;
     }
@@ -939,7 +984,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         return <td key={col.key} className={cls}>
           <span className="flex items-start gap-1.5">
             <span className="font-mono text-slate-500 shrink-0">{i + 1}.</span>
-            <span className="flex-1">{st.action || "—"}</span>
+            <span className="flex-1"><Linkified text={st.action} /></span>
             {st.image && (
               <button
                 onMouseEnter={(e) => onShowPreview(e, st.imageUrl || st.image)}
@@ -953,9 +998,9 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           </span>
         </td>;
       case "testData":
-        return <td key={col.key} className={cls}>{st.testData || (i === 0 ? c.testData : "") || "—"}</td>;
+        return <td key={col.key} className={cls}><Linkified text={st.testData || (i === 0 ? c.testData : "")} /></td>;
       case "expected":
-        return <td key={col.key} className={cls}>{st.expected || "—"}</td>;
+        return <td key={col.key} className={cls}><Linkified text={st.expected} /></td>;
       default:
         return null;
     }
@@ -1258,5 +1303,96 @@ function PrintReport({ groups }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function Lightbox({ src, onClose }) {
+  const [scale, setScale] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const boxRef = useRef(null);
+  const dragRef = useRef(null);
+
+  const clamp = (s) => Math.min(6, Math.max(1, s));
+  const zoomTo = (next) => {
+    const s = clamp(next);
+    setScale(s);
+    if (s === 1) setPos({ x: 0, y: 0 });
+  };
+
+  // wheel mora ne-pasivno da bi preventDefault radio
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      e.preventDefault();
+      zoomTo(scale * (e.deltaY < 0 ? 1.2 : 1 / 1.2));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const onMouseDown = (e) => {
+    if (scale <= 1) return;
+    e.preventDefault();
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y, moved: false };
+    const move = (ev) => {
+      const d = dragRef.current;
+      if (!d) return;
+      d.moved = true;
+      setPos({ x: d.ox + (ev.clientX - d.sx), y: d.oy + (ev.clientY - d.sy) });
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      setTimeout(() => { dragRef.current = null; }, 0);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
+  return (
+    <div ref={boxRef}
+      className="fixed inset-0 bg-slate-900/85 z-50 flex items-center justify-center overflow-hidden"
+      onClick={() => { if (!dragRef.current?.moved) onClose(); }}>
+      <img src={src} alt="Screenshot"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={onMouseDown}
+        onDoubleClick={(e) => { e.stopPropagation(); zoomTo(scale > 1 ? 1 : 2.5); }}
+        draggable={false}
+        style={{ transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
+                 cursor: scale > 1 ? "grab" : "zoom-in",
+                 transition: dragRef.current ? "none" : "transform 120ms" }}
+        className="max-w-[92vw] max-h-[92vh] rounded-xl shadow-2xl select-none" />
+      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-slate-800/90 rounded-full px-2 py-1.5"
+        onClick={(e) => e.stopPropagation()}>
+        <button onClick={() => zoomTo(scale / 1.4)} className="text-slate-200 hover:text-white w-7 h-7 text-lg leading-none">−</button>
+        <span className="text-slate-300 text-xs font-mono w-12 text-center">{Math.round(scale * 100)}%</span>
+        <button onClick={() => zoomTo(scale * 1.4)} className="text-slate-200 hover:text-white w-7 h-7 text-lg leading-none">+</button>
+        <button onClick={() => zoomTo(1)} className="text-slate-300 hover:text-white text-xs px-2">Reset</button>
+        <button onClick={onClose} className="text-slate-300 hover:text-white px-2"><X size={15} /></button>
+      </div>
+      <p className="absolute top-4 left-1/2 -translate-x-1/2 text-slate-400 text-xs">
+        scroll = zoom · prevlačenje = pomeranje · dupli klik = 250% · Esc = zatvori
+      </p>
+    </div>
+  );
+}
+
+// tekst sa kliktabilnim URL-ovima (za tabelu)
+function Linkified({ text }) {
+  if (!text) return "—";
+  const parts = String(text).split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((p, i) =>
+    /^https?:\/\//.test(p)
+      ? <a key={i} href={p} target="_blank" rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-indigo-600 underline underline-offset-2 break-all hover:text-indigo-800">{p}</a>
+      : p
   );
 }
