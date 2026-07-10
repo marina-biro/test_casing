@@ -901,16 +901,16 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
 
   const cols = COLUMNS.filter((c) => !hiddenCols.has(c.key));
 
-  // da li TC prolazi sve aktivne filtere; task se trazi kroz CELU istoriju
+  // da li TC prolazi sve aktivne filtere;
+  // Task filter proverava samo trenutno/prikazano zaduženje, ne celu istoriju.
   const passes = (c) => {
     if (statusFilter !== null && !statusFilter.has(c.status)) return false;
     if (envFilter !== null && !(c.environment || []).some((e) => envFilter.has(e))) return false;
     const full = allCases[c.id] || {};
     if (taskQ.trim()) {
       const tn = taskQ.trim().toUpperCase();
-      const hit = (full.task || "").toUpperCase().includes(tn) ||
-        (full.history || []).some((h) => (h.task || "").toUpperCase().includes(tn));
-      if (!hit) return false;
+      const currentTask = full.history?.[0]?.task || full.task || "";
+      if (!currentTask.toUpperCase().includes(tn)) return false;
     }
     if (q.trim()) {
       const needle = q.trim().toLowerCase();
