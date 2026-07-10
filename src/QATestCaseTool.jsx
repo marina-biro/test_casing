@@ -259,9 +259,15 @@ export default function QATestCaseTool() {
       setLoading(false);
       setTimeout(() => {
         const p = new URLSearchParams(window.location.search);
-        if (resolvedRole !== "qa" && !p.get("view") && !p.get("tc")) {
-          // Prosleđujemo upravo učitane slučajeve direktno, umesto da koristimo
-          // index iz stale closure-a prvog rendera.
+        if (!p.get("view") && !p.get("tc")) {
+          // Svi korisnici bez eksplicitnog linka sleću na tabelu.
+          openTable(loadedCases);
+        } else if (p.get("view") === "table") {
+          // Primeni URL filtere, ali za prvi load koristi upravo učitan index.
+          setStatusFilter(p.get("status") ? new Set(p.get("status").split(",").filter(Boolean)) : null);
+          setEnvFilter(p.get("env") ? new Set(p.get("env").split(",").filter(Boolean)) : null);
+          setTaskQ(p.get("task") || "");
+          setQ(p.get("q") || "");
           openTable(loadedCases);
         } else {
           applyUrlRef.current();
