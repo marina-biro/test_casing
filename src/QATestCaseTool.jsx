@@ -101,7 +101,7 @@ const emptyCase = (suiteId, seq, by, task) => {
     notes: "",
     steps: [{ id: uid(), action: "", testData: "", expected: "", image: null }],
     actualResult: "",
-    actualResultImage: null,
+    actualResultImages: [], // [{path, url?}] - url je izveden, ne cuva se
     task: task || null,
     priority: "medium",
     caseType: "positive",
@@ -446,15 +446,18 @@ export default function QATestCaseTool() {
 
   const attachActualImage = async (file) => {
     const dataUrl = await resizeImage(file);
-    const prev = tc?.actualResultImage;
     try {
       const { path, url } = await uploadScreenshot(dataUrl);
-      setTc((p) => ({ ...p, actualResultImage: path, actualResultImageUrl: url }));
-      if (prev) deleteScreenshot(prev);
+      setTc((p) => ({ ...p, actualResultImages: [...(p.actualResultImages || []), { path, url }] }));
     } catch (err) {
       console.error("Upload screenshota nije uspeo, cuvam base64:", err);
-      setTc((p) => ({ ...p, actualResultImage: dataUrl, actualResultImageUrl: null }));
+      setTc((p) => ({ ...p, actualResultImages: [...(p.actualResultImages || []), { path: dataUrl, url: null }] }));
     }
+  };
+
+  const removeActualImage = (path) => {
+    deleteScreenshot(path);
+    setTc((p) => ({ ...p, actualResultImages: (p.actualResultImages || []).filter((im) => im.path !== path) }));
   };
 
   const handleActualPaste = async (e) => {
@@ -522,7 +525,7 @@ export default function QATestCaseTool() {
           </button>
           <button onClick={() => openTable()}
             className={`px-3 py-1.5 rounded-md transition-colors ${view === "table" ? "bg-white shadow-sm text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>
-            Tabela
+            Table
           </button>
         </div>
         <div className="hidden md:flex items-center gap-3 text-xs font-mono text-slate-500 ml-2">
@@ -781,7 +784,7 @@ export default function QATestCaseTool() {
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex items-center mb-3">
                   <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Test Steps</p>
-                  <p className="ml-auto text-xs text-slate-400">Screenshot: Ctrl+V direktno u polje koraka</p>
+                  <p className="ml-auto text-xs text-slate-400">Screenshot: Ctrl+V directly into a step field</p>
                 </div>
                 <div className="space-y-3">
                   {tc.steps.map((s, i) => (
@@ -856,22 +859,26 @@ export default function QATestCaseTool() {
               <Field label="Actual Result" hint="what actually happened — paste a screenshot with Ctrl+V"
                 value={tc.actualResult} onChange={(v) => setField("actualResult", v)}
                 onPaste={canEdit ? handleActualPaste : undefined} readOnly={!canEdit}>
-                {tc.actualResultImage && (
-                  <div className="mt-2 inline-flex items-center gap-1">
-                    <button
-                      onMouseEnter={(e) => showPreview(e, tc.actualResultImageUrl || tc.actualResultImage)}
-                      onMouseMove={(e) => showPreview(e, tc.actualResultImageUrl || tc.actualResultImage)}
-                      onMouseLeave={hidePreview}
-                      onClick={() => { hidePreview(); setLightbox(tc.actualResultImageUrl || tc.actualResultImage); }}
-                      className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
-                      <ImageIcon size={13} /> screenshot
-                    </button>
-                    {canEdit && (
-                    <button onClick={() => { deleteScreenshot(tc.actualResultImage); setTc((p) => ({ ...p, actualResultImage: null, actualResultImageUrl: null })); }}
-                      className="text-slate-300 hover:text-rose-500 p-0.5" title="Remove image">
-                      <X size={13} />
-                    </button>
-                    )}
+                {(tc.actualResultImages || []).length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {tc.actualResultImages.map((im, i) => (
+                      <span key={im.path} className="inline-flex items-center gap-1">
+                        <button
+                          onMouseEnter={(e) => showPreview(e, im.url || im.path)}
+                          onMouseMove={(e) => showPreview(e, im.url || im.path)}
+                          onMouseLeave={hidePreview}
+                          onClick={() => { hidePreview(); setLightbox(im.url || im.path); }}
+                          className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
+                          <ImageIcon size={13} /> screenshot {i + 1}
+                        </button>
+                        {canEdit && (
+                        <button onClick={() => removeActualImage(im.path)}
+                          className="text-slate-300 hover:text-rose-500 p-0.5" title="Remove image">
+                          <X size={13} />
+                        </button>
+                        )}
+                      </span>
+                    ))}
                   </div>
                 )}
               </Field>
@@ -1057,8 +1064,10 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         const u = st.imageUrl || (st.image?.startsWith("data:") ? st.image : null);
         if (u) urls.push(u);
       });
-      const au = c.actualResultImageUrl || (c.actualResultImage?.startsWith("data:") ? c.actualResultImage : null);
-      if (au) urls.push(au);
+      (c.actualResultImages || []).forEach((im) => {
+        const au = im.url || (im.path?.startsWith("data:") ? im.path : null);
+        if (au) urls.push(au);
+      });
     }));
     await Promise.all(urls.map((u) => new Promise((res) => {
       const im = new Image();
@@ -1095,15 +1104,19 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         return <td key={col.key} rowSpan={span} className={cls}>
           <span className="flex items-start gap-1.5">
             <span className="flex-1"><Linkified text={c.actualResult} /></span>
-            {c.actualResultImage && (
-              <button
-                onMouseEnter={(e) => onShowPreview(e, c.actualResultImageUrl || c.actualResultImage)}
-                onMouseMove={(e) => onShowPreview(e, c.actualResultImageUrl || c.actualResultImage)}
-                onMouseLeave={onHidePreview}
-                onClick={() => { onHidePreview(); onLightbox(c.actualResultImageUrl || c.actualResultImage); }}
-                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover to preview">
-                <ImageIcon size={13} />
-              </button>
+            {(c.actualResultImages || []).length > 0 && (
+              <span className="flex flex-col gap-0.5 shrink-0">
+                {c.actualResultImages.map((im) => (
+                  <button key={im.path}
+                    onMouseEnter={(e) => onShowPreview(e, im.url || im.path)}
+                    onMouseMove={(e) => onShowPreview(e, im.url || im.path)}
+                    onMouseLeave={onHidePreview}
+                    onClick={() => { onHidePreview(); onLightbox(im.url || im.path); }}
+                    className="text-indigo-500 hover:text-indigo-700" title="Screenshot — hover to preview">
+                    <ImageIcon size={13} />
+                  </button>
+                ))}
+              </span>
             )}
           </span>
         </td>;
@@ -1508,9 +1521,12 @@ function PrintReport({ groups }) {
                 </table>
               )}
 
-              {(c.actualResult || c.actualResultImage) && (
+              {(c.actualResult || (c.actualResultImages || []).length > 0) && (
                 <p className="meta"><b>Actual Result:</b> {c.actualResult || ""}
-                  {imgSrc(c.actualResultImage, c.actualResultImageUrl) && <img className="thumb" src={imgSrc(c.actualResultImage, c.actualResultImageUrl)} alt="" />}
+                  {(c.actualResultImages || []).map((im) => {
+                    const src = im.url || (im.path?.startsWith("data:") ? im.path : null);
+                    return src ? <img key={im.path} className="thumb" src={src} alt="" /> : null;
+                  })}
                 </p>
               )}
               {c.postconditions && <p className="meta"><b>Postconditions:</b> {c.postconditions}</p>}

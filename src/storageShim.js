@@ -61,8 +61,8 @@ async function withSignedUrls(c) {
   const stepPaths = (c.steps || [])
     .filter((s) => s.image && !s.image.startsWith("data:"))
     .map((s) => s.image);
-  const arPath = c.actualResultImage && !c.actualResultImage.startsWith("data:") ? [c.actualResultImage] : [];
-  const paths = [...stepPaths, ...arPath];
+  const arPaths = (c.actualResultImages || []).map((im) => im.path).filter((p) => p && !p.startsWith("data:"));
+  const paths = [...stepPaths, ...arPaths];
   if (paths.length === 0) return c;
   const { data } = await supabase.storage.from(BUCKET).createSignedUrls(paths, SIGNED_URL_TTL);
   const urlMap = new Map((data || []).map((d) => [d.path, d.signedUrl]));
@@ -73,7 +73,8 @@ async function withSignedUrls(c) {
         ? { ...s, imageUrl: urlMap.get(s.image) || null }
         : s
     ),
-    actualResultImageUrl: arPath.length ? urlMap.get(c.actualResultImage) || null : null,
+    actualResultImages: (c.actualResultImages || []).map((im) =>
+      im.path && !im.path.startsWith("data:") ? { ...im, url: urlMap.get(im.path) || null } : im),
   };
 }
 
@@ -105,7 +106,7 @@ function rowToCase(row, historyRows) {
     task: row.task || null,
     priority: row.priority || "medium",
     caseType: row.case_type || "positive",
-    actualResultImage: row.actual_result_image || null,
+    actualResultImages: (row.actual_result_images || []).map((p) => ({ path: p, url: null })),
     steps: row.steps || [],
     status: row.status,
     createdBy: row.created_by_name,
@@ -132,7 +133,7 @@ function caseToRow(c) {
     task: c.task || null,
     priority: c.priority || "medium",
     case_type: c.caseType || "positive",
-    actual_result_image: c.actualResultImage || null,
+    actual_result_images: (c.actualResultImages || []).map((im) => im.path).filter(Boolean),
     // imageUrl je izveden (potpisan link), ne cuva se - u bazu ide samo putanja
     steps: (c.steps || []).map(({ imageUrl, ...rest }) => rest),
     status: c.status,
@@ -282,8 +283,8 @@ window.storage = {
     if (key.startsWith("tc-case-")) {
       const id = key.slice("tc-case-".length);
       // pre brisanja reda, pokupi i obrisi njegove slike iz bucketa
-      const { data: row } = await supabase.from("test_cases").select("steps,actual_result_image").eq("id", id).maybeSingle();
-      const paths = [...(row?.steps || []).map((s) => s.image), row?.actual_result_image]
+      const { data: row } = await supabase.from("test_cases").select("steps,actual_result_images").eq("id", id).maybeSingle();
+      const paths = [...(row?.steps || []).map((s) => s.image), ...(row?.actual_result_images || [])]
         .filter((p) => p && !p.startsWith("data:"));
       if (paths.length > 0) {
         const { error: eImg } = await supabase.storage.from(BUCKET).remove(paths);
