@@ -103,6 +103,8 @@ function rowToCase(row, historyRows) {
     notes: row.notes || "",
     actualResult: row.actual_result || "",
     task: row.task || null,
+    priority: row.priority || "medium",
+    caseType: row.case_type || "positive",
     actualResultImage: row.actual_result_image || null,
     steps: row.steps || [],
     status: row.status,
@@ -128,6 +130,8 @@ function caseToRow(c) {
     notes: c.notes,
     actual_result: c.actualResult,
     task: c.task || null,
+    priority: c.priority || "medium",
+    case_type: c.caseType || "positive",
     actual_result_image: c.actualResultImage || null,
     // imageUrl je izveden (potpisan link), ne cuva se - u bazu ide samo putanja
     steps: (c.steps || []).map(({ imageUrl, ...rest }) => rest),
@@ -173,7 +177,7 @@ window.storage = {
       const [{ data: suites, error: e1 }, { data: cases, error: e2 }] =
         await Promise.all([
           supabase.from("suites").select("id,name").order("position").order("created_at"),
-          supabase.from("test_cases").select("id,suite_id,case_id,title,status,environment"),
+          supabase.from("test_cases").select("id,suite_id,case_id,title,status,environment,priority,case_type"),
         ]);
       if (e1) throw e1;
       if (e2) throw e2;
@@ -187,6 +191,8 @@ window.storage = {
           title: c.title || "",
           status: c.status,
           environment: c.environment || [],
+          priority: c.priority || "medium",
+          caseType: c.case_type || "positive",
         })),
       };
       return { key, value: JSON.stringify(meta), shared: true };

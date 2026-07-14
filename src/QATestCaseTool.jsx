@@ -8,12 +8,23 @@ import { uploadScreenshot, deleteScreenshot } from "./storageShim.js";
 
 // ---------- status config ----------
 const STATUSES = {
-  created:      { label: "Kreiran",       dot: "bg-sky-500", chip: "bg-sky-50 text-sky-700 border-sky-200" },
-  not_executed: { label: "Nije izvršen", dot: "bg-slate-300", chip: "bg-slate-100 text-slate-600 border-slate-200" },
-  pass:         { label: "Pass",          dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  fail:         { label: "Fail",          dot: "bg-rose-500", chip: "bg-rose-50 text-rose-700 border-rose-200" },
-  review:       { label: "Traži proveru", dot: "bg-amber-400", chip: "bg-amber-50 text-amber-700 border-amber-200" },
-  blocked:      { label: "Blocked",       dot: "bg-slate-700", chip: "bg-slate-800 text-slate-100 border-slate-700" },
+  created:      { label: "Created",      dot: "bg-sky-500", chip: "bg-sky-50 text-sky-700 border-sky-200" },
+  not_executed: { label: "Not executed", dot: "bg-slate-300", chip: "bg-slate-100 text-slate-600 border-slate-200" },
+  pass:         { label: "Pass",         dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  fail:         { label: "Fail",         dot: "bg-rose-500", chip: "bg-rose-50 text-rose-700 border-rose-200" },
+  review:       { label: "Needs review", dot: "bg-amber-400", chip: "bg-amber-50 text-amber-700 border-amber-200" },
+  blocked:      { label: "Blocked",      dot: "bg-slate-700", chip: "bg-slate-800 text-slate-100 border-slate-700" },
+};
+
+// prioritet i tip test slucaja
+const PRIORITIES = {
+  core:   { label: "Core",   chip: "bg-rose-50 text-rose-700 border-rose-200" },
+  medium: { label: "Medium", chip: "bg-slate-100 text-slate-600 border-slate-200" },
+  edge:   { label: "Edge",   chip: "bg-sky-50 text-sky-700 border-sky-200" },
+};
+const CASE_TYPES = {
+  positive: { label: "Positive", chip: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  negative: { label: "Negative", chip: "bg-amber-50 text-amber-700 border-amber-200" },
 };
 
 // Osnova linka ka Jiri - npr. "https://jira.firma.rs/browse/" ili
@@ -92,6 +103,8 @@ const emptyCase = (suiteId, seq, by, task) => {
     actualResult: "",
     actualResultImage: null,
     task: task || null,
+    priority: "medium",
+    caseType: "positive",
     status: "created",
     createdBy: by,
     createdAt: at,
@@ -122,6 +135,8 @@ export default function QATestCaseTool() {
   const [taskQ, setTaskQ] = useState("");
   const [statusFilter, setStatusFilter] = useState(null); // null = bez filtera; Set = cekirano
   const [envFilter, setEnvFilter] = useState(null);
+  const [priorityFilter, setPriorityFilter] = useState(null);
+  const [typeFilter, setTypeFilter] = useState(null);
   const [allCases, setAllCases] = useState(null); // {id: fullCase} for table view
   const [tableLoading, setTableLoading] = useState(false);
   const [hoverPreview, setHoverPreview] = useState(null); // {src, x, y}
@@ -206,6 +221,10 @@ export default function QATestCaseTool() {
     setStatusFilter(st ? new Set(st.split(",").filter(Boolean)) : null);
     const en = p.get("env");
     setEnvFilter(en ? new Set(en.split(",").filter(Boolean)) : null);
+    const pr = p.get("priority");
+    setPriorityFilter(pr ? new Set(pr.split(",").filter(Boolean)) : null);
+    const ty = p.get("type");
+    setTypeFilter(ty ? new Set(ty.split(",").filter(Boolean)) : null);
     setTaskQ(p.get("task") || "");
     setQ(p.get("q") || "");
     if (p.get("view") === "table") {
@@ -229,6 +248,8 @@ export default function QATestCaseTool() {
     if (view === "table") p.set("view", "table");
     if (statusFilter !== null) p.set("status", [...statusFilter].join(","));
     if (envFilter !== null) p.set("env", [...envFilter].join(","));
+    if (priorityFilter !== null) p.set("priority", [...priorityFilter].join(","));
+    if (typeFilter !== null) p.set("type", [...typeFilter].join(","));
     if (taskQ.trim()) p.set("task", taskQ.trim());
     if (q.trim()) p.set("q", q.trim());
     if (view === "editor" && selectedId) p.set("tc", selectedId);
@@ -239,7 +260,7 @@ export default function QATestCaseTool() {
     if (prevViewRef.current !== view) window.history.pushState(null, "", url);
     else window.history.replaceState(null, "", url);
     prevViewRef.current = view;
-  }, [view, selectedId, q, taskQ, statusFilter, envFilter, loading]);
+  }, [view, selectedId, q, taskQ, statusFilter, envFilter, priorityFilter, typeFilter, loading]);
 
   // auto-reset delete confirmation after 3s
   useEffect(() => {
@@ -304,7 +325,7 @@ export default function QATestCaseTool() {
       await sSet(`tc-case-${tc.id}`, tc);
       setIndex((prev) => {
         const next = prev.map((c) =>
-          c.id === tc.id ? { ...c, title: tc.title, caseId: tc.caseId, status: tc.status, suiteId: tc.suiteId, environment: tc.environment } : c
+          c.id === tc.id ? { ...c, title: tc.title, caseId: tc.caseId, status: tc.status, suiteId: tc.suiteId, environment: tc.environment, priority: tc.priority, caseType: tc.caseType } : c
         );
         persistMeta(suites, next);
         return next;
@@ -351,7 +372,7 @@ export default function QATestCaseTool() {
     }
     const fresh = emptyCase(suiteId, seq, userName.trim() || "nepoznat korisnik", task.trim() || null);
     await sSet(`tc-case-${fresh.id}`, fresh);
-    const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [] }];
+    const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [], priority: fresh.priority, caseType: fresh.caseType }];
     setIndex(nextI); persistMeta(suites, nextI);
     setSelectedId(fresh.id); setTc(fresh);
   };
@@ -478,7 +499,7 @@ export default function QATestCaseTool() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 font-mono text-sm">
-        Učitavanje test slučajeva…
+        Loading test cases…
       </div>
     );
   }
@@ -514,14 +535,14 @@ export default function QATestCaseTool() {
           {canEdit ? (
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               {saved ? <Check size={14} className="text-emerald-500" /> : <Save size={14} className="animate-pulse" />}
-              <span>{saved ? "Sačuvano" : "Čuvam…"}</span>
+              <span>{saved ? "Saved" : "Saving…"}</span>
             </div>
           ) : (
-            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-1">samo pregled</span>
+            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 rounded-full px-2.5 py-1">view only</span>
           )}
           {canEdit && (
           <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5"
-            title="Aktivan Jira task — automatski se upisuje na nove TC-ove i promene statusa">
+            title="Active Jira task — automatically attached to new TCs and status changes">
             <span className="text-xs font-mono text-slate-400">Task</span>
             <input value={task}
               onChange={(e) => setTask(e.target.value)}
@@ -531,11 +552,11 @@ export default function QATestCaseTool() {
               className="bg-transparent text-sm font-mono outline-none w-24 placeholder-slate-400 placeholder:italic" />
             {task && (
               <button onClick={() => { setTask(""); sSet("tc-task", ""); }}
-                className="text-slate-300 hover:text-slate-500" title="Očisti task"><X size={13} /></button>
+                className="text-slate-300 hover:text-slate-500" title="Clear task"><X size={13} /></button>
             )}
           </div>
           )}
-          <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5" title="Ime je izvedeno iz email naloga">
+          <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-1.5" title="Name is derived from your email account">
             <User size={14} className="text-slate-400" />
             <span className="text-sm text-slate-700 font-mono">{userName || "…"}</span>
           </div>
@@ -550,22 +571,22 @@ export default function QATestCaseTool() {
             {canEdit && (!addingSuite ? (
               <button onClick={() => setAddingSuite(true)}
                 className="w-full flex items-center justify-center gap-2 text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg py-2 transition-colors">
-                <FolderPlus size={15} /> Nova funkcionalnost
+                <FolderPlus size={15} /> New suite
               </button>
             ) : (
               <div className="flex gap-1.5">
                 <input autoFocus value={newSuiteName}
                   onChange={(e) => setNewSuiteName(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") addSuite(); if (e.key === "Escape") { setAddingSuite(false); setNewSuiteName(""); } }}
-                  placeholder="Naziv — npr. Plaćanje"
+                  placeholder="Name — e.g. Payments"
                   className="flex-1 min-w-0 text-sm border border-indigo-300 rounded-lg px-2.5 py-2 outline-none focus:border-indigo-500" />
-                <button onClick={addSuite} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2.5" title="Dodaj"><Check size={15} /></button>
-                <button onClick={() => { setAddingSuite(false); setNewSuiteName(""); }} className="text-slate-400 hover:text-slate-600 px-1" title="Otkaži"><X size={15} /></button>
+                <button onClick={addSuite} className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg px-2.5" title="Add"><Check size={15} /></button>
+                <button onClick={() => { setAddingSuite(false); setNewSuiteName(""); }} className="text-slate-400 hover:text-slate-600 px-1" title="Cancel"><X size={15} /></button>
               </div>
             ))}
             <div className="relative mt-2">
               <input value={sideQ} onChange={(e) => setSideQ(e.target.value)}
-                placeholder="Pretraga — ID, naziv, funkcionalnost…"
+                placeholder="Search — ID, title, suite…"
                 className="w-full text-xs border border-slate-200 rounded-lg pl-3 pr-7 py-2 outline-none focus:border-indigo-400" />
               {sideQ && (
                 <button onClick={() => setSideQ("")}
@@ -577,7 +598,7 @@ export default function QATestCaseTool() {
           </div>
           {suites.length === 0 && (
             <p className="px-4 py-6 text-sm text-slate-400 text-center leading-relaxed">
-              Dodaj prvu funkcionalnost (suite) — npr. „Postavljanje oglasa" ili „Plaćanje" — pa u nju test slučajeve.
+              Add your first suite — e.g. "Ad posting" or "Payments" — then add test cases to it.
             </p>
           )}
           {suites.map((s) => {
@@ -596,7 +617,7 @@ export default function QATestCaseTool() {
               <div className="group flex items-center px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
                 <button onClick={() => toggleCollapse(s.id)}
                   className="flex items-center gap-1 min-w-0 flex-1 text-left hover:text-slate-700"
-                  title={isCol ? "Otvori" : "Skupi"}>
+                  title={isCol ? "Expand" : "Collapse"}>
                   <ChevronDown size={13}
                     className={`shrink-0 transition-transform ${isCol ? "-rotate-90" : ""}`} />
                   <span className="truncate uppercase">{s.name}</span>
@@ -605,29 +626,29 @@ export default function QATestCaseTool() {
                   )}
                 </button>
                 {canEdit && (
-                <button onClick={() => addCase(s.id)} title="Dodaj test slučaj"
+                <button onClick={() => addCase(s.id)} title="Add test case"
                   className="ml-auto opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-800 p-1"><Plus size={14} /></button>
                 )}
                 {canEdit && (
-                <button onClick={() => deleteSuite(s.id)} title={confirmDelete === `suite-${s.id}` ? "Klikni ponovo za brisanje" : "Obriši suite"}
+                <button onClick={() => deleteSuite(s.id)} title={confirmDelete === `suite-${s.id}` ? "Click again to delete" : "Delete suite"}
                   className={`p-1 ${confirmDelete === `suite-${s.id}` ? "opacity-100 text-rose-600" : "opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600"}`}>
-                  {confirmDelete === `suite-${s.id}` ? <span className="text-[10px] font-bold normal-case">Sigurno?</span> : <Trash2 size={13} />}
+                  {confirmDelete === `suite-${s.id}` ? <span className="text-[10px] font-bold normal-case">Sure?</span> : <Trash2 size={13} />}
                 </button>
                 )}
               </div>
               {!isCol && vis.map((c) => (
                 <button key={c.id} onClick={() => openCase(c.id)}
-                  title={`${c.caseId} — ${c.title || "Bez naziva"}`}
+                  title={`${c.caseId} — ${c.title || "Untitled"}`}
                   className={`w-full flex items-center gap-2 px-4 py-2 text-left text-sm border-l-2 transition-colors ${
                     selectedId === c.id ? "border-indigo-600 bg-indigo-50/60" : "border-transparent hover:bg-slate-50"}`}>
                   <span className={`w-2 h-2 rounded-full shrink-0 ${STATUSES[c.status]?.dot || "bg-slate-300"}`} />
                   <span className="font-mono text-xs text-slate-400 shrink-0">{c.caseId}</span>
-                  <span className="truncate text-slate-700">{c.title || "Bez naziva"}</span>
+                  <span className="truncate text-slate-700">{c.title || "Untitled"}</span>
                 </button>
               ))}
               {!isCol && vis.length === 0 && canEdit && (
                 <button onClick={() => addCase(s.id)} className="w-full px-6 py-1.5 text-left text-xs text-indigo-500 hover:text-indigo-700">
-                  + prvi test slučaj
+                  + first test case
                 </button>
               )}
             </div>
@@ -636,7 +657,7 @@ export default function QATestCaseTool() {
         </aside>
         )}
         {view === "editor" && (
-          <div onMouseDown={startResize} title="Prevuci za širinu liste"
+          <div onMouseDown={startResize} title="Drag to resize the list"
             className="w-1 shrink-0 cursor-col-resize bg-slate-100 hover:bg-indigo-400 active:bg-indigo-500 transition-colors" />
         )}
 
@@ -653,6 +674,8 @@ export default function QATestCaseTool() {
               taskQ={taskQ} setTaskQ={setTaskQ}
               statusFilter={statusFilter} setStatusFilter={setStatusFilter}
               envFilter={envFilter} setEnvFilter={setEnvFilter}
+              priorityFilter={priorityFilter} setPriorityFilter={setPriorityFilter}
+              typeFilter={typeFilter} setTypeFilter={setTypeFilter}
               allCases={allCases}
               loading={tableLoading}
               onStatusChange={setStatusInTable}
@@ -663,43 +686,77 @@ export default function QATestCaseTool() {
             />
           ) : !tc ? (
             <div className="h-full flex items-center justify-center text-slate-400 text-sm">
-              Izaberi test slučaj iz liste ili napravi novi.
+              Select a test case from the list or create a new one.
             </div>
           ) : (
             <div className="max-w-4xl mx-auto p-6 space-y-5">
               {/* title row */}
               <div className="flex items-start gap-3">
                 <span className="font-mono text-sm text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 w-28 text-center select-all"
-                  title="Automatski dodeljen, jedinstven — ne menja se">{tc.caseId}</span>
+                  title="Auto-assigned, unique — cannot be changed">{tc.caseId}</span>
                 <input
                   className="flex-1 text-lg font-semibold bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none placeholder-slate-400 placeholder:italic"
                   value={tc.title} onChange={(e) => setField("title", e.target.value)}
-                  placeholder='Naziv — npr. „Login sa validnim kredencijalima"' readOnly={!canEdit} />
+                  placeholder='Title — e.g. "Login with valid credentials"' readOnly={!canEdit} />
                 {canEdit && (
-                <button onClick={() => deleteCase(tc.id)} title={confirmDelete === `case-${tc.id}` ? "Klikni ponovo za brisanje" : "Obriši"}
+                <button onClick={() => deleteCase(tc.id)} title={confirmDelete === `case-${tc.id}` ? "Click again to delete" : "Delete"}
                   className={`p-2.5 rounded-lg border ${confirmDelete === `case-${tc.id}` ? "bg-rose-50 border-rose-300 text-rose-600 text-xs font-semibold" : "text-slate-400 hover:text-rose-600 bg-white border-slate-200"}`}>
-                  {confirmDelete === `case-${tc.id}` ? "Sigurno?" : <Trash2 size={16} />}
+                  {confirmDelete === `case-${tc.id}` ? "Sure?" : <Trash2 size={16} />}
                 </button>
                 )}
               </div>
 
               {/* status bar */}
               <div className="bg-white border border-slate-200 rounded-xl p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  {Object.entries(STATUSES).map(([key, cfg]) => (
-                    <button key={key} onClick={() => setStatus(key)} disabled={!canEdit}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                        tc.status === key ? cfg.chip + " ring-2 ring-offset-1 ring-indigo-300" : "bg-white text-slate-400 border-slate-200 hover:border-slate-300"}`}>
-                      {cfg.label}
-                    </button>
-                  ))}
-                  {tc.executedAt && (
-                    <span className="ml-auto flex items-center gap-1.5 text-xs font-mono text-slate-500">
-                      <Clock size={13} />
-                      {STATUSES[tc.status].label} · {tc.executedBy}{tc.history?.[0]?.task ? <> · <TaskLink task={tc.history[0].task} /></> : ""} · {fmtTime(tc.executedAt)}
-                    </span>
-                  )}
+                <div className="flex flex-col gap-3">
+                  {/* status grupa */}
+                  <div className="bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2 self-start">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Status</p>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {Object.entries(STATUSES).map(([key, cfg]) => (
+                        <button key={key} onClick={() => setStatus(key)} disabled={!canEdit}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                            tc.status === key ? cfg.chip + " ring-2 ring-offset-1 ring-indigo-300" : "bg-white text-slate-400 border-slate-200 hover:border-slate-300"}`}>
+                          {cfg.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-stretch gap-3">
+                  {/* prioritet grupa */}
+                  <div className="bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Priority</p>
+                    <div className="flex items-center gap-1.5">
+                      {Object.entries(PRIORITIES).map(([k, cfg]) => (
+                        <button key={k} onClick={() => canEdit && setField("priority", k)} disabled={!canEdit}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                            (tc.priority || "medium") === k ? cfg.chip + " ring-2 ring-offset-1 ring-indigo-300" : "bg-white text-slate-400 border-slate-200 hover:border-slate-300"}`}>
+                          {cfg.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* tip grupa */}
+                  <div className="bg-slate-50/70 border border-slate-200 rounded-lg px-3 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Type</p>
+                    <div className="flex items-center gap-1.5">
+                      {Object.entries(CASE_TYPES).map(([k, cfg]) => (
+                        <button key={k} onClick={() => canEdit && setField("caseType", k)} disabled={!canEdit}
+                          className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                            (tc.caseType || "positive") === k ? cfg.chip + " ring-2 ring-offset-1 ring-indigo-300" : "bg-white text-slate-400 border-slate-200 hover:border-slate-300"}`}>
+                          {cfg.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  </div>
                 </div>
+                {tc.executedAt && (
+                  <p className="mt-3 flex items-center gap-1.5 text-xs font-mono text-slate-500">
+                    <Clock size={13} />
+                    {STATUSES[tc.status].label} · {tc.executedBy}{tc.history?.[0]?.task ? <> · <TaskLink task={tc.history[0].task} /></> : ""} · {fmtTime(tc.executedAt)}
+                  </p>
+                )}
               </div>
 
               {/* environment */}
@@ -717,7 +774,7 @@ export default function QATestCaseTool() {
               </div>
 
               {/* preconditions */}
-              <Field label="Preconditions" hint="šta mora da bude ispunjeno pre početka testa"
+              <Field label="Preconditions" hint="what must be in place before the test starts"
                 value={tc.preconditions} onChange={(v) => setField("preconditions", v)} readOnly={!canEdit} />
 
               {/* steps */}
@@ -739,28 +796,28 @@ export default function QATestCaseTool() {
                           <textarea rows={2} readOnly={!canEdit} value={s.action}
                             onChange={(e) => setStep(s.id, "action", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id, "action")}
-                            placeholder="Akcija — npr. „Unesi email, klikni Login“"
+                            placeholder={"Action — e.g. \"Enter email, click Login\""}
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                           <textarea rows={2} readOnly={!canEdit} value={s.testData || ""}
                             onChange={(e) => setStep(s.id, "testData", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id, "testData")}
-                            placeholder={"Test data — npr.\nuser@test.com / 123456"}
+                            placeholder={"Test data — e.g.\nuser@test.com / 123456"}
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                           <textarea rows={2} readOnly={!canEdit} value={s.expected}
                             onChange={(e) => setStep(s.id, "expected", e.target.value)}
                             onPaste={(e) => handlePaste(e, s.id, "expected")}
-                            placeholder="Expected — npr. „Redirect na dashboard“"
+                            placeholder={"Expected — e.g. \"Redirect to dashboard\""}
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                         </div>
                         <div className="flex flex-col gap-1 items-end">
                           {canEdit && (
-                          <label className="cursor-pointer text-slate-400 hover:text-indigo-600 p-1" title="Dodaj sliku">
+                          <label className="cursor-pointer text-slate-400 hover:text-indigo-600 p-1" title="Add image">
                             <ImageIcon size={16} />
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e, s.id)} />
                           </label>
                           )}
                           {canEdit && (
-                          <button onClick={() => removeStep(s.id)} className="text-slate-300 hover:text-rose-500 p-1" title="Obriši korak">
+                          <button onClick={() => removeStep(s.id)} className="text-slate-300 hover:text-rose-500 p-1" title="Delete step">
                             <X size={15} />
                           </button>
                           )}
@@ -778,7 +835,7 @@ export default function QATestCaseTool() {
                           </button>
                           {canEdit && (
                           <button onClick={() => { deleteScreenshot(s.image); setStepFields(s.id, { image: null, imageUrl: null }); }}
-                            className="text-slate-300 hover:text-rose-500 p-0.5" title="Ukloni sliku">
+                            className="text-slate-300 hover:text-rose-500 p-0.5" title="Remove image">
                             <X size={13} />
                           </button>
                           )}
@@ -790,13 +847,13 @@ export default function QATestCaseTool() {
                 {canEdit && (
                 <button onClick={addStep}
                   className="mt-3 flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium">
-                  <Plus size={15} /> Dodaj korak
+                  <Plus size={15} /> Add step
                 </button>
                 )}
               </div>
 
               {/* actual / post / notes */}
-              <Field label="Actual Result" hint="šta se stvarno desilo — screenshot ide sa Ctrl+V"
+              <Field label="Actual Result" hint="what actually happened — paste a screenshot with Ctrl+V"
                 value={tc.actualResult} onChange={(v) => setField("actualResult", v)}
                 onPaste={canEdit ? handleActualPaste : undefined} readOnly={!canEdit}>
                 {tc.actualResultImage && (
@@ -811,23 +868,23 @@ export default function QATestCaseTool() {
                     </button>
                     {canEdit && (
                     <button onClick={() => { deleteScreenshot(tc.actualResultImage); setTc((p) => ({ ...p, actualResultImage: null, actualResultImageUrl: null })); }}
-                      className="text-slate-300 hover:text-rose-500 p-0.5" title="Ukloni sliku">
+                      className="text-slate-300 hover:text-rose-500 p-0.5" title="Remove image">
                       <X size={13} />
                     </button>
                     )}
                   </div>
                 )}
               </Field>
-              <Field label="Postconditions" hint="u kakvom je stanju sistem nakon završetka testa"
+              <Field label="Postconditions" hint="system state after the test finishes"
                 value={tc.postconditions} onChange={(v) => setField("postconditions", v)} readOnly={!canEdit} />
-              <Field label="Notes / Comments" hint="dodatne napomene, zapažanja, linkovi"
+              <Field label="Notes / Comments" hint="additional notes, observations, links"
                 value={tc.notes} onChange={(v) => setField("notes", v)} readOnly={!canEdit} />
 
               {/* istorija statusa - skroz na dnu, sklopiva */}
               {tc.history?.length > 0 && (
                 <details className="bg-white border border-slate-200 rounded-xl p-4">
                   <summary className="text-xs font-semibold uppercase tracking-wider text-slate-500 cursor-pointer hover:text-slate-700">
-                    Istorija statusa ({tc.history.length})
+                    Status history ({tc.history.length})
                   </summary>
                   <ul className="mt-3 space-y-1">
                     {tc.history.map((h, i) => (
@@ -891,6 +948,8 @@ const COLUMNS = [
   { key: "expected",      name: "Expected Result", w: "min-w-[200px]" },
   { key: "actualResult",  name: "Actual Result",   w: "min-w-[150px]" },
   { key: "status",        name: "Status",          w: "w-40" },
+  { key: "priority",      name: "Priority",        w: "w-24" },
+  { key: "caseType",      name: "Type",            w: "w-24" },
   { key: "task",          name: "Task",            w: "w-28" },
   { key: "postconditions",name: "Postconditions",  w: "min-w-[140px]" },
   { key: "environment",   name: "Environment",     w: "min-w-[120px]" },
@@ -900,7 +959,8 @@ const COLUMNS = [
 
 
 function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCase, onShowPreview, onHidePreview, onLightbox, collapsed, onToggleCollapse,
-  canEdit, q, setQ, taskQ, setTaskQ, statusFilter, setStatusFilter, envFilter, setEnvFilter }) {
+  canEdit, q, setQ, taskQ, setTaskQ, statusFilter, setStatusFilter, envFilter, setEnvFilter,
+  priorityFilter, setPriorityFilter, typeFilter, setTypeFilter }) {
   const [printGroups, setPrintGroups] = useState(null);
   const toolbarRef = useRef(null);
   const [hiddenCols, setHiddenCols] = useState(() => {
@@ -943,10 +1003,10 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     });
 
   if (loading || !allCases) {
-    return <div className="h-full flex items-center justify-center text-slate-400 text-sm font-mono">Učitavanje tabele…</div>;
+    return <div className="h-full flex items-center justify-center text-slate-400 text-sm font-mono">Loading table…</div>;
   }
   if (index.length === 0) {
-    return <div className="h-full flex items-center justify-center text-slate-400 text-sm">Nema test slučajeva za prikaz — proveri filter ili dodaj nove.</div>;
+    return <div className="h-full flex items-center justify-center text-slate-400 text-sm">No test cases to show — proveri filter ili dodaj nove.</div>;
   }
 
   const cols = COLUMNS.filter((c) => !hiddenCols.has(c.key));
@@ -956,6 +1016,8 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
   const passes = (c) => {
     if (statusFilter !== null && !statusFilter.has(c.status)) return false;
     if (envFilter !== null && !(c.environment || []).some((e) => envFilter.has(e))) return false;
+    if (priorityFilter !== null && !priorityFilter.has(c.priority || "medium")) return false;
+    if (typeFilter !== null && !typeFilter.has(c.caseType || "positive")) return false;
     const full = allCases[c.id] || {};
     if (taskQ.trim()) {
       const tn = taskQ.trim().toUpperCase();
@@ -975,7 +1037,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     }
     return true;
   };
-  const anyFilterActive = statusFilter !== null || envFilter !== null || q.trim() || taskQ.trim();
+  const anyFilterActive = statusFilter !== null || envFilter !== null || priorityFilter !== null || typeFilter !== null || q.trim() || taskQ.trim();
 
   // ---------- izvoz u PDF (print-to-PDF) ----------
   const exportPdf = async () => {
@@ -1039,7 +1101,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
                 onMouseMove={(e) => onShowPreview(e, c.actualResultImageUrl || c.actualResultImage)}
                 onMouseLeave={onHidePreview}
                 onClick={() => { onHidePreview(); onLightbox(c.actualResultImageUrl || c.actualResultImage); }}
-                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover za pregled">
+                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover to preview">
                 <ImageIcon size={13} />
               </button>
             )}
@@ -1065,6 +1127,18 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             </p>
           )}
         </td>;
+      case "priority": {
+        const cfg = PRIORITIES[c.priority || "medium"] || PRIORITIES.medium;
+        return <td key={col.key} rowSpan={span} className={cls}>
+          <span className={`inline-block text-xs rounded-full border px-2 py-0.5 ${cfg.chip}`}>{cfg.label}</span>
+        </td>;
+      }
+      case "caseType": {
+        const cfg = CASE_TYPES[c.caseType || "positive"] || CASE_TYPES.positive;
+        return <td key={col.key} rowSpan={span} className={cls}>
+          <span className={`inline-block text-xs rounded-full border px-2 py-0.5 ${cfg.chip}`}>{cfg.label}</span>
+        </td>;
+      }
       case "task": {
         const lastTask = c.history?.[0]?.task || c.task || null;
         return <td key={col.key} rowSpan={span} className={`${cls} font-mono`}><TaskLink task={lastTask} /></td>;
@@ -1095,7 +1169,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
                 onMouseMove={(e) => onShowPreview(e, st.imageUrl || st.image)}
                 onMouseLeave={onHidePreview}
                 onClick={() => { onHidePreview(); onLightbox(st.imageUrl || st.image); }}
-                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover za pregled">
+                className="text-indigo-500 hover:text-indigo-700 shrink-0" title="Screenshot — hover to preview">
                 <ImageIcon size={13} />
               </button>
             )}
@@ -1129,9 +1203,9 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           ))}
           <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
             <button onClick={() => setStatusFilter(null)}
-              className="text-[11px] text-indigo-600 hover:underline">Čekiraj sve</button>
+              className="text-[11px] text-indigo-600 hover:underline">Check all</button>
             <button onClick={() => setStatusFilter(new Set())}
-              className="text-[11px] text-indigo-600 hover:underline">Odčekiraj sve</button>
+              className="text-[11px] text-indigo-600 hover:underline">Uncheck all</button>
           </div>
         </FilterButton>
 
@@ -1150,21 +1224,61 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           ))}
           <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
             <button onClick={() => setEnvFilter(null)}
-              className="text-[11px] text-indigo-600 hover:underline">Čekiraj sve</button>
+              className="text-[11px] text-indigo-600 hover:underline">Check all</button>
             <button onClick={() => setEnvFilter(new Set())}
-              className="text-[11px] text-indigo-600 hover:underline">Odčekiraj sve</button>
+              className="text-[11px] text-indigo-600 hover:underline">Uncheck all</button>
+          </div>
+        </FilterButton>
+        <FilterButton
+          label="Priority"
+          active={priorityFilter !== null}
+          open={openPanel === "priority"}
+          onToggle={() => setOpenPanel(openPanel === "priority" ? null : "priority")}>
+          {Object.entries(PRIORITIES).map(([k, cfg]) => (
+            <label key={k} className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer py-1">
+              <input type="checkbox" checked={priorityFilter === null || priorityFilter.has(k)}
+                onChange={() => setPriorityFilter((p) => excelToggle(p, k, Object.keys(PRIORITIES)))}
+                className="accent-indigo-600" />
+              {cfg.label}
+            </label>
+          ))}
+          <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
+            <button onClick={() => setPriorityFilter(null)}
+              className="text-[11px] text-indigo-600 hover:underline">Check all</button>
+            <button onClick={() => setPriorityFilter(new Set())}
+              className="text-[11px] text-slate-400 hover:underline">Uncheck all</button>
+          </div>
+        </FilterButton>
+        <FilterButton
+          label="Type"
+          active={typeFilter !== null}
+          open={openPanel === "type"}
+          onToggle={() => setOpenPanel(openPanel === "type" ? null : "type")}>
+          {Object.entries(CASE_TYPES).map(([k, cfg]) => (
+            <label key={k} className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer py-1">
+              <input type="checkbox" checked={typeFilter === null || typeFilter.has(k)}
+                onChange={() => setTypeFilter((p) => excelToggle(p, k, Object.keys(CASE_TYPES)))}
+                className="accent-indigo-600" />
+              {cfg.label}
+            </label>
+          ))}
+          <div className="flex gap-3 mt-2 pt-2 border-t border-slate-100">
+            <button onClick={() => setTypeFilter(null)}
+              className="text-[11px] text-indigo-600 hover:underline">Check all</button>
+            <button onClick={() => setTypeFilter(new Set())}
+              className="text-[11px] text-slate-400 hover:underline">Uncheck all</button>
           </div>
         </FilterButton>
 
-        {(statusFilter !== null || envFilter !== null || taskQ) && (
-          <button onClick={() => { setStatusFilter(null); setEnvFilter(null); setTaskQ(""); }}
+        {(statusFilter !== null || envFilter !== null || priorityFilter !== null || typeFilter !== null || taskQ) && (
+          <button onClick={() => { setStatusFilter(null); setEnvFilter(null); setPriorityFilter(null); setTypeFilter(null); setTaskQ(""); }}
             className="text-xs text-indigo-600 hover:text-indigo-800 underline underline-offset-2">
-            Poništi filtere
+            Clear filters
           </button>
         )}
         <div className="relative">
           <input value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Pretraga — ID ili naziv…"
+            placeholder="Search — ID or title…"
             className="text-xs border border-slate-200 rounded-lg pl-3 pr-7 py-1.5 w-56 outline-none focus:border-indigo-400 bg-white" />
           {q && (
             <button onClick={() => setQ("")}
@@ -1174,14 +1288,14 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           )}
         </div>
         <button onClick={exportPdf}
-          title="Izvoz onoga sto trenutno prolazi filtere"
+          title="Export what currently passes the filters"
           className="text-xs border border-slate-200 bg-white rounded-lg px-3 py-1.5 text-slate-600 hover:border-indigo-300 flex items-center gap-1.5">
           <Printer size={13} /> PDF
         </button>
         <div className="ml-auto flex items-center gap-2">
         <div className="relative">
           <input value={taskQ} onChange={(e) => setTaskQ(e.target.value)}
-            placeholder="Task — npr. PA-1234"
+            placeholder="Task — e.g. PA-1234"
             className={`text-xs border rounded-lg pl-3 pr-7 py-1.5 w-36 font-mono outline-none focus:border-indigo-400 ${
               taskQ ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`} />
           {taskQ && (
@@ -1193,7 +1307,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         </div>
         <FilterButton
           align="right"
-          label={`Kolone (${cols.length}/${COLUMNS.length})`}
+          label={`Columns (${cols.length}/${COLUMNS.length})`}
           active={hiddenCols.size > 0}
           open={openPanel === "cols"}
           onToggle={() => setOpenPanel(openPanel === "cols" ? null : "cols")}>
@@ -1226,7 +1340,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             {anyFilterActive && !index.some(passes) && (
               <tr>
                 <td colSpan={cols.length} className="border border-slate-200 px-3 py-6 text-center text-xs text-slate-400">
-                  Nijedan test slučaj ne prolazi filtere/pretragu — promeni izbor ili očisti pretragu.
+                  No test cases match the filters/search — change the selection or clear the search.
                 </td>
               </tr>
             )}
@@ -1239,7 +1353,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
                   <td colSpan={cols.length}
                     onClick={() => onToggleCollapse(s.id)}
                     className="border-x border-slate-200 border-t-2 border-t-slate-300 bg-indigo-50/70 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-indigo-700 cursor-pointer select-none hover:bg-indigo-100/70"
-                    title={isCollapsed ? "Otvori" : "Skupi"}>
+                    title={isCollapsed ? "Expand" : "Collapse"}>
                     <span className="inline-flex items-center gap-1.5">
                       <ChevronDown size={13} className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
                       {s.name}
@@ -1330,13 +1444,13 @@ function PrintReport({ groups }) {
       `}</style>
 
       <h1>Test Case Report</h1>
-      <p className="sub">Generisano: {today}</p>
+      <p className="sub">Generated: {today}</p>
 
       <div className="summary">
-        <h2>Pregled scenarija</h2>
+        <h2>Scenario overview</h2>
         <table>
           <thead>
-            <tr><th>Funkcionalnost</th><th>ID</th><th>Naziv</th><th>Status</th><th>Poslednja promena</th></tr>
+            <tr><th>Suite</th><th>ID</th><th>Title</th><th>Priority</th><th>Type</th><th>Status</th><th>Last change</th></tr>
           </thead>
           <tbody>
             {allCasesFlat.map((c) => (
@@ -1344,6 +1458,8 @@ function PrintReport({ groups }) {
                 <td>{c._suite}</td>
                 <td style={{ fontFamily: "monospace" }}>{c.caseId}</td>
                 <td>{c.title || "—"}</td>
+                <td>{PRIORITIES[c.priority || "medium"]?.label}</td>
+                <td>{CASE_TYPES[c.caseType || "positive"]?.label}</td>
                 <td>{STATUSES[c.status]?.label || c.status}</td>
                 <td style={{ fontFamily: "monospace", fontSize: "10px" }}>
                   {c.executedBy || "—"}{c.history?.[0]?.task ? ` · ${c.history[0].task}` : ""}{c.executedAt ? ` · ${fmtTime(c.executedAt)}` : ""}
@@ -1360,8 +1476,12 @@ function PrintReport({ groups }) {
           {g.cases.map((c) => (
             <div key={c.id} className="tc-block">
               <div className="tc-head">
-                <span><span className="tc-id">{c.caseId}</span>{"  "}<span className="tc-title">{c.title || "Bez naziva"}</span></span>
-                <span className="badge">{STATUSES[c.status]?.label || c.status}</span>
+                <span><span className="tc-id">{c.caseId}</span>{"  "}<span className="tc-title">{c.title || "Untitled"}</span></span>
+                <span>
+                  <span className="badge">{PRIORITIES[c.priority || "medium"]?.label}</span>{" "}
+                  <span className="badge">{CASE_TYPES[c.caseType || "positive"]?.label}</span>{" "}
+                  <span className="badge">{STATUSES[c.status]?.label || c.status}</span>
+                </span>
               </div>
               {c.history?.[0]?.task && <p className="meta"><b>Task:</b> {c.history[0].task}</p>}
               {(c.environment || []).length > 0 && <p className="meta"><b>Environment:</b> {c.environment.join(", ")}</p>}
@@ -1370,7 +1490,7 @@ function PrintReport({ groups }) {
               {(c.steps || []).some((st) => st.action || st.expected || st.testData || st.image) && (
                 <table>
                   <thead>
-                    <tr><th style={{ width: "18px" }}>#</th><th>Akcija</th><th>Test data</th><th>Expected</th></tr>
+                    <tr><th style={{ width: "18px" }}>#</th><th>Action</th><th>Test data</th><th>Expected</th></tr>
                   </thead>
                   <tbody>
                     {c.steps.map((st, i) => (
@@ -1480,7 +1600,7 @@ function Lightbox({ src, onClose }) {
         <button onClick={onClose} className="text-slate-300 hover:text-white px-2"><X size={15} /></button>
       </div>
       <p className="absolute top-4 left-1/2 -translate-x-1/2 text-slate-400 text-xs">
-        klik ili scroll = uvećanje · prevlačenje = pomeranje · dupli klik = 100% · Esc = zatvori
+        click or scroll = zoom · drag = pan · double-click = 100% · Esc = close
       </p>
     </div>
   );
