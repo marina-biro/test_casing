@@ -214,9 +214,10 @@ export default function QATestCaseTool() {
   const hidePreview = () => setHoverPreview(null);
 
   // ---------- URL <-> stanje: deljivi linkovi + browser Back ----------
+  const urlAppliedRef = useRef(false); // dok je false, write-efekat ne dira URL
   const applyUrlRef = useRef(() => {});
-  applyUrlRef.current = () => {
-    const p = new URLSearchParams(window.location.search);
+  applyUrlRef.current = (savedParams, loadedCases) => {
+    const p = savedParams || new URLSearchParams(window.location.search);
     const st = p.get("status");
     setStatusFilter(st ? new Set(st.split(",").filter(Boolean)) : null);
     const en = p.get("env");
@@ -228,7 +229,7 @@ export default function QATestCaseTool() {
     setTaskQ(p.get("task") || "");
     setQ(p.get("q") || "");
     if (p.get("view") === "table") {
-      openTable();
+      openTable(loadedCases); // na prvom loadu koristi upravo ucitan index
     } else {
       setView("editor");
       const tcId = p.get("tc");
@@ -243,7 +244,7 @@ export default function QATestCaseTool() {
 
   const prevViewRef = useRef(view);
   useEffect(() => {
-    if (loading) return;
+    if (loading || !urlAppliedRef.current) return; // ne gazi deljene linkove pre citanja
     const p = new URLSearchParams();
     if (view === "table") p.set("view", "table");
     if (statusFilter !== null) p.set("status", [...statusFilter].join(","));
@@ -292,22 +293,18 @@ export default function QATestCaseTool() {
         setSuites(meta.suites || []);
         setIndex(cases);
       }
+      // parametri se citaju ODMAH (sinhrono) - pre nego sto write-efekat
+      // stigne da ih pregazi podrazumevanim stanjem
+      const p = new URLSearchParams(window.location.search);
       setLoading(false);
       setTimeout(() => {
-        const p = new URLSearchParams(window.location.search);
         if (!p.get("view") && !p.get("tc")) {
-          // Svi korisnici bez eksplicitnog linka sleću na tabelu.
-          openTable(loadedCases);
-        } else if (p.get("view") === "table") {
-          // Primeni URL filtere, ali za prvi load koristi upravo učitan index.
-          setStatusFilter(p.get("status") ? new Set(p.get("status").split(",").filter(Boolean)) : null);
-          setEnvFilter(p.get("env") ? new Set(p.get("env").split(",").filter(Boolean)) : null);
-          setTaskQ(p.get("task") || "");
-          setQ(p.get("q") || "");
+          // Svi korisnici bez eksplicitnog linka slecu na tabelu.
           openTable(loadedCases);
         } else {
-          applyUrlRef.current();
+          applyUrlRef.current(p, loadedCases);
         }
+        urlAppliedRef.current = true; // od sada write-efekat sme da pise URL
       }, 0);
     })();
   }, []);
