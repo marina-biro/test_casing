@@ -149,11 +149,12 @@ export default function QATestCaseTool() {
   // items parametar sprečava stale closure tokom inicijalnog učitavanja:
   // prvi render još uvek ima prazan index, iako je meta upravo učitan.
   const openTable = async (items = index) => {
+    const list = Array.isArray(items) ? items : index; // event ili bilo sta drugo -> index
     setView("table");
     setTableLoading(true);
     try {
       const entries = await Promise.all(
-        items.map(async (c) => [c.id, await sGet(`tc-case-${c.id}`)])
+        list.map(async (c) => [c.id, await sGet(`tc-case-${c.id}`)])
       );
       setAllCases(Object.fromEntries(entries.filter(([, v]) => v)));
     } finally {
@@ -460,7 +461,7 @@ export default function QATestCaseTool() {
             className={`px-3 py-1.5 rounded-md transition-colors ${view === "editor" ? "bg-white shadow-sm text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>
             Editor
           </button>
-          <button onClick={openTable}
+          <button onClick={() => openTable()}
             className={`px-3 py-1.5 rounded-md transition-colors ${view === "table" ? "bg-white shadow-sm text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>
             Tabela
           </button>
@@ -907,16 +908,17 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
 
   const cols = COLUMNS.filter((c) => !hiddenCols.has(c.key));
 
-  // da li TC prolazi sve aktivne filtere;
-  // Task filter proverava samo trenutno/prikazano zaduženje, ne celu istoriju.
+  // da li TC prolazi sve aktivne filtere; task se trazi kroz CELU istoriju:
+  // TC testiran juce pod PA-3737 a danas pod PA-2229 izlazi za OBA filtera
   const passes = (c) => {
     if (statusFilter !== null && !statusFilter.has(c.status)) return false;
     if (envFilter !== null && !(c.environment || []).some((e) => envFilter.has(e))) return false;
     const full = allCases[c.id] || {};
     if (taskQ.trim()) {
       const tn = taskQ.trim().toUpperCase();
-      const currentTask = full.history?.[0]?.task || full.task || "";
-      if (!currentTask.toUpperCase().includes(tn)) return false;
+      const hit = (full.task || "").toUpperCase().includes(tn) ||
+        (full.history || []).some((h) => (h.task || "").toUpperCase().includes(tn));
+      if (!hit) return false;
     }
     if (q.trim()) {
       const needle = q.trim().toLowerCase();
