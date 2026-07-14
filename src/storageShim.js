@@ -153,6 +153,12 @@ window.storage = {
       return { key, value: JSON.stringify(v), shared: false };
     }
 
+    if (key === "tc-next-seq") {
+      const { data, error } = await supabase.rpc("next_tc_seq");
+      if (error) throw error;
+      return { key, value: JSON.stringify(data), shared: true };
+    }
+
     if (key === "tc-role") {
       const { data: { user } } = await supabase.auth.getUser();
       let role = "viewer";

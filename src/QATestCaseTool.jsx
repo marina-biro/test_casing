@@ -16,6 +16,10 @@ const STATUSES = {
   blocked:      { label: "Blocked",       dot: "bg-slate-700", chip: "bg-slate-800 text-slate-100 border-slate-700" },
 };
 
+// Osnova linka ka Jiri - npr. "https://jira.firma.rs/browse/" ili
+// "https://firma.atlassian.net/browse/". Prazno = task ostaje obican tekst.
+const JIRA_BROWSE_URL = "https://polovnjaci.atlassian.net/browse/";
+
 const ENVIRONMENTS = ["Chrome", "Firefox", "Safari", "Edge", "iPhone", "Android", "Tablet", "API"];
 
 const uid = () => crypto.randomUUID();
@@ -60,6 +64,16 @@ const sSet = async (key, val) => {
   catch (e) { console.error("storage set failed", e); return false; }
 };
 const sDel = async (key) => { try { await window.storage.delete(key); } catch {} };
+
+// selektovan tekst + nalepljen URL -> [selektovano](url); vraca novi sadrzaj ili null
+function smartLink(e) {
+  const url = (e.clipboardData?.getData("text") || "").trim();
+  if (!/^https?:\/\/\S+$/.test(url)) return null;
+  const el = e.target;
+  const { selectionStart: s, selectionEnd: en, value } = el;
+  if (s == null || s === en) return null; // nema selekcije -> obicno lepljenje
+  return value.slice(0, s) + "[" + value.slice(s, en) + "](" + url + ")" + value.slice(en);
+}
 
 const emptyCase = (suiteId, seq, by, task) => {
   const at = now();
@@ -320,8 +334,22 @@ export default function QATestCaseTool() {
     if (tc && tc.suiteId === id) { setTc(null); setSelectedId(null); }
   };
 
+  const nextSeqFallback = () => {
+    // najveci broj iz postojecih ID-jeva + 1 (radi i ako rpc nije dostupan)
+    const nums = index.map((c) => parseInt(String(c.caseId || "").replace(/\D/g, ""), 10)).filter(Number.isFinite);
+    return (nums.length ? Math.max(...nums) : 0) + 1;
+  };
+
   const addCase = async (suiteId) => {
-    const fresh = emptyCase(suiteId, index.length + 1, userName.trim() || "nepoznat korisnik", task.trim() || null);
+    let seq;
+    try {
+      seq = await sGet("tc-next-seq"); // atomski brojac u bazi - nikad ne ponavlja broj
+      if (!Number.isFinite(Number(seq))) throw new Error("bad seq");
+      seq = Number(seq);
+    } catch {
+      seq = nextSeqFallback();
+    }
+    const fresh = emptyCase(suiteId, seq, userName.trim() || "nepoznat korisnik", task.trim() || null);
     await sSet(`tc-case-${fresh.id}`, fresh);
     const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [] }];
     setIndex(nextI); persistMeta(suites, nextI);
@@ -415,11 +443,21 @@ export default function QATestCaseTool() {
     await attachActualImage(item.getAsFile());
   };
 
-  const handlePaste = async (e, stepId) => {
+  const handlePaste = async (e, stepId, field) => {
     const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
-    if (!item) return;
-    e.preventDefault();
-    await attachImage(stepId, item.getAsFile());
+    if (item) {
+      e.preventDefault();
+      await attachImage(stepId, item.getAsFile());
+      return;
+    }
+    // selektovan tekst + nalepljen URL -> [tekst](url)
+    if (field) {
+      const next = smartLink(e);
+      if (next !== null) {
+        e.preventDefault();
+        setStepFields(stepId, { [field]: next });
+      }
+    }
   };
 
   const handleFile = async (e, stepId) => {
@@ -631,9 +669,8 @@ export default function QATestCaseTool() {
             <div className="max-w-4xl mx-auto p-6 space-y-5">
               {/* title row */}
               <div className="flex items-start gap-3">
-                <input
-                  className="font-mono text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 w-32 focus:border-indigo-400 outline-none"
-                  value={tc.caseId} onChange={(e) => setField("caseId", e.target.value)} placeholder="TC_001" readOnly={!canEdit} />
+                <span className="font-mono text-sm text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2 w-28 text-center select-all"
+                  title="Automatski dodeljen, jedinstven — ne menja se">{tc.caseId}</span>
                 <input
                   className="flex-1 text-lg font-semibold bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none placeholder-slate-400 placeholder:italic"
                   value={tc.title} onChange={(e) => setField("title", e.target.value)}
@@ -659,7 +696,7 @@ export default function QATestCaseTool() {
                   {tc.executedAt && (
                     <span className="ml-auto flex items-center gap-1.5 text-xs font-mono text-slate-500">
                       <Clock size={13} />
-                      {STATUSES[tc.status].label} · {tc.executedBy}{tc.history?.[0]?.task ? ` · ${tc.history[0].task}` : ""} · {fmtTime(tc.executedAt)}
+                      {STATUSES[tc.status].label} · {tc.executedBy}{tc.history?.[0]?.task ? <> · <TaskLink task={tc.history[0].task} /></> : ""} · {fmtTime(tc.executedAt)}
                     </span>
                   )}
                 </div>
@@ -701,17 +738,17 @@ export default function QATestCaseTool() {
                         <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
                           <textarea rows={2} readOnly={!canEdit} value={s.action}
                             onChange={(e) => setStep(s.id, "action", e.target.value)}
-                            onPaste={(e) => handlePaste(e, s.id)}
+                            onPaste={(e) => handlePaste(e, s.id, "action")}
                             placeholder="Akcija — npr. „Unesi email, klikni Login“"
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                           <textarea rows={2} readOnly={!canEdit} value={s.testData || ""}
                             onChange={(e) => setStep(s.id, "testData", e.target.value)}
-                            onPaste={(e) => handlePaste(e, s.id)}
+                            onPaste={(e) => handlePaste(e, s.id, "testData")}
                             placeholder={"Test data — npr.\nuser@test.com / 123456"}
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                           <textarea rows={2} readOnly={!canEdit} value={s.expected}
                             onChange={(e) => setStep(s.id, "expected", e.target.value)}
-                            onPaste={(e) => handlePaste(e, s.id)}
+                            onPaste={(e) => handlePaste(e, s.id, "expected")}
                             placeholder="Expected — npr. „Redirect na dashboard“"
                             className="text-sm bg-white border border-slate-300 rounded-lg px-3 py-2 focus:border-indigo-400 outline-none resize-y placeholder-slate-400 placeholder:italic" />
                         </div>
@@ -796,7 +833,7 @@ export default function QATestCaseTool() {
                     {tc.history.map((h, i) => (
                       <li key={i} className="text-xs font-mono text-slate-500 flex items-center gap-2">
                         <span className={`w-1.5 h-1.5 rounded-full ${STATUSES[h.status]?.dot}`} />
-                        {STATUSES[h.status]?.label} — {h.by}{h.task ? ` — ${h.task}` : ""} — {fmtTime(h.at)}
+                        {STATUSES[h.status]?.label} — {h.by}{h.task ? <> — <TaskLink task={h.task} /></> : ""} — {fmtTime(h.at)}
                       </li>
                     ))}
                   </ul>
@@ -832,7 +869,13 @@ function Field({ label, hint, value, onChange, placeholder, onPaste, children, r
         {hint && <span className="normal-case font-normal tracking-normal text-slate-400"> — {hint}</span>}
       </p>
       <textarea rows={2} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        onPaste={onPaste} readOnly={readOnly}
+        onPaste={(e) => {
+          if (onPaste) onPaste(e);
+          if (e.defaultPrevented || readOnly) return;
+          const next = smartLink(e);
+          if (next !== null) { e.preventDefault(); onChange(next); }
+        }}
+        readOnly={readOnly}
         className="w-full text-sm text-slate-800 bg-transparent outline-none resize-y placeholder-slate-400 placeholder:italic" />
       {children}
     </div>
@@ -1024,7 +1067,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         </td>;
       case "task": {
         const lastTask = c.history?.[0]?.task || c.task || null;
-        return <td key={col.key} rowSpan={span} className={`${cls} font-mono`}>{lastTask || "—"}</td>;
+        return <td key={col.key} rowSpan={span} className={`${cls} font-mono`}><TaskLink task={lastTask} /></td>;
       }
       case "postconditions":
         return <td key={col.key} rowSpan={span} className={cls}><Linkified text={c.postconditions} /></td>;
@@ -1352,12 +1395,10 @@ function PrintReport({ groups }) {
               )}
               {c.postconditions && <p className="meta"><b>Postconditions:</b> {c.postconditions}</p>}
               {c.notes && <p className="meta"><b>Notes:</b> {c.notes}</p>}
-              {(c.history || []).length > 0 && (
-                <div style={{ marginTop: "4px" }}>
-                  {c.history.map((h, i) => (
-                    <p key={i} className="hist">{STATUSES[h.status]?.label || h.status} — {h.by}{h.task ? ` — ${h.task}` : ""} — {fmtTime(h.at)}</p>
-                  ))}
-                </div>
+              {c.history?.[0] && (
+                <p className="hist" style={{ marginTop: "4px" }}>
+                  {STATUSES[c.history[0].status]?.label || c.history[0].status} — {c.history[0].by}{c.history[0].task ? ` — ${c.history[0].task}` : ""} — {fmtTime(c.history[0].at)}
+                </p>
               )}
             </div>
           ))}
@@ -1422,7 +1463,7 @@ function Lightbox({ src, onClose }) {
       className="fixed inset-0 bg-slate-900/85 z-50 flex items-center justify-center overflow-hidden"
       onClick={() => { if (!dragRef.current?.moved) onClose(); }}>
       <img src={src} alt="Screenshot"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); if (scale === 1) zoomTo(2.5); }}
         onMouseDown={onMouseDown}
         onDoubleClick={(e) => { e.stopPropagation(); zoomTo(scale > 1 ? 1 : 2.5); }}
         draggable={false}
@@ -1431,7 +1472,7 @@ function Lightbox({ src, onClose }) {
                  transition: dragRef.current ? "none" : "transform 120ms" }}
         className="max-w-[92vw] max-h-[92vh] rounded-xl shadow-2xl select-none" />
       <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-slate-800/90 rounded-full px-2 py-1.5"
-        onClick={(e) => e.stopPropagation()}>
+        onClick={(e) => { e.stopPropagation(); if (scale === 1) zoomTo(2.5); }}>
         <button onClick={() => zoomTo(scale / 1.4)} className="text-slate-200 hover:text-white w-7 h-7 text-lg leading-none">−</button>
         <span className="text-slate-300 text-xs font-mono w-12 text-center">{Math.round(scale * 100)}%</span>
         <button onClick={() => zoomTo(scale * 1.4)} className="text-slate-200 hover:text-white w-7 h-7 text-lg leading-none">+</button>
@@ -1439,7 +1480,7 @@ function Lightbox({ src, onClose }) {
         <button onClick={onClose} className="text-slate-300 hover:text-white px-2"><X size={15} /></button>
       </div>
       <p className="absolute top-4 left-1/2 -translate-x-1/2 text-slate-400 text-xs">
-        scroll = zoom · prevlačenje = pomeranje · dupli klik = 250% · Esc = zatvori
+        klik ili scroll = uvećanje · prevlačenje = pomeranje · dupli klik = 100% · Esc = zatvori
       </p>
     </div>
   );
@@ -1448,12 +1489,33 @@ function Lightbox({ src, onClose }) {
 // tekst sa kliktabilnim URL-ovima (za tabelu)
 function Linkified({ text }) {
   if (!text) return "—";
-  const parts = String(text).split(/(https?:\/\/[^\s]+)/g);
-  return parts.map((p, i) =>
-    /^https?:\/\//.test(p)
-      ? <a key={i} href={p} target="_blank" rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="text-indigo-600 underline underline-offset-2 break-all hover:text-indigo-800">{p}</a>
-      : p
+  const s = String(text);
+  // [prikazani tekst](https://link) ili goli https://link
+  const re = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)/g;
+  const out = [];
+  let last = 0, m, k = 0;
+  while ((m = re.exec(s))) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const label = m[1] || m[3];
+    const href = m[2] || m[3];
+    out.push(
+      <a key={k++} href={href} target="_blank" rel="noopener noreferrer"
+        onClick={(e) => { e.stopPropagation(); if (scale === 1) zoomTo(2.5); }}
+        className="text-indigo-600 underline underline-offset-2 break-all hover:text-indigo-800">{label}</a>
+    );
+    last = re.lastIndex;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+
+// broj Jira taska kao link (ako je JIRA_BROWSE_URL podesen)
+function TaskLink({ task }) {
+  if (!task) return "—";
+  if (!JIRA_BROWSE_URL) return task;
+  return (
+    <a href={JIRA_BROWSE_URL + encodeURIComponent(task)} target="_blank" rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="text-indigo-600 underline underline-offset-2 hover:text-indigo-800">{task}</a>
   );
 }
