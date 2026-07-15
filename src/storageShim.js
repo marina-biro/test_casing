@@ -106,6 +106,7 @@ function rowToCase(row, historyRows) {
     task: row.task || null,
     priority: row.priority || "medium",
     caseType: row.case_type || "positive",
+    position: row.position ?? 0,
     actualResultImages: (row.actual_result_images || []).map((p) => ({ path: p, url: null })),
     steps: row.steps || [],
     status: row.status,
@@ -133,6 +134,7 @@ function caseToRow(c) {
     task: c.task || null,
     priority: c.priority || "medium",
     case_type: c.caseType || "positive",
+    position: c.position ?? 0,
     actual_result_images: (c.actualResultImages || []).map((im) => im.path).filter(Boolean),
     // imageUrl je izveden (potpisan link), ne cuva se - u bazu ide samo putanja
     steps: (c.steps || []).map(({ imageUrl, ...rest }) => rest),
@@ -178,7 +180,7 @@ window.storage = {
       const [{ data: suites, error: e1 }, { data: cases, error: e2 }] =
         await Promise.all([
           supabase.from("suites").select("id,name").order("position").order("created_at"),
-          supabase.from("test_cases").select("id,suite_id,case_id,title,status,environment,priority,case_type"),
+          supabase.from("test_cases").select("id,suite_id,case_id,title,status,environment,priority,case_type,position").order("position"),
         ]);
       if (e1) throw e1;
       if (e2) throw e2;
@@ -194,6 +196,7 @@ window.storage = {
           environment: c.environment || [],
           priority: c.priority || "medium",
           caseType: c.case_type || "positive",
+          position: c.position ?? 0,
         })),
       };
       return { key, value: JSON.stringify(meta), shared: true };
@@ -227,6 +230,18 @@ window.storage = {
     if (key === "tc-task") {
       await supabase.auth.updateUser({ data: { active_task: JSON.parse(value) } });
       return { key, value, shared: false };
+    }
+
+    if (key === "tc-positions") {
+      // drag&drop: azurira samo suite_id + position za pogodjene TC-ove
+      const rows = JSON.parse(value);
+      for (const r of rows) {
+        const { error } = await supabase.from("test_cases")
+          .update({ suite_id: r.suiteId, position: r.position })
+          .eq("id", r.id);
+        if (error) throw error;
+      }
+      return { key, value, shared: true };
     }
 
     if (key === "tc-meta") {

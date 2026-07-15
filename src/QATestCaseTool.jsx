@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
-  FolderPlus, X, Clock, User, Save, Check, Printer
+  FolderPlus, X, Clock, User, Save, Check, Printer, Pencil
 } from "lucide-react";
 import { uploadScreenshot, deleteScreenshot } from "./storageShim.js";
 
@@ -127,6 +127,50 @@ export default function QATestCaseTool() {
   const [lightbox, setLightbox] = useState(null);
   const [saved, setSaved] = useState(true);
   const [addingSuite, setAddingSuite] = useState(false);
+  const [renamingSuite, setRenamingSuite] = useState(null); // {id, name}
+  const [dragOverSuite, setDragOverSuite] = useState(null);
+  const [dragOverCase, setDragOverCase] = useState(null);
+
+  const renameSuite = (id, name) => {
+    const clean = (name || "").trim();
+    setRenamingSuite(null);
+    if (!clean) return;
+    const nextS = suites.map((s) => (s.id === id ? { ...s, name: clean } : s));
+    setSuites(nextS);
+    persistMeta(nextS, index);
+  };
+
+  // premesti TC: u suite (na kraj) ili ispred konkretnog TC-a (beforeId)
+  const moveCase = async (caseId, suiteId, beforeId = null) => {
+    setDragOverSuite(null);
+    setDragOverCase(null);
+    const drag = index.find((c) => c.id === caseId);
+    if (!drag || caseId === beforeId) return;
+
+    // ciljna lista bez prevucenog, pa umetni na pravo mesto
+    const target = index
+      .filter((c) => c.suiteId === suiteId && c.id !== caseId)
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    const at = beforeId ? target.findIndex((c) => c.id === beforeId) : target.length;
+    target.splice(at < 0 ? target.length : at, 0, { ...drag, suiteId });
+
+    // pozicije 1..n samo u ciljnom suite-u; prevuceni menja i suiteId
+    const posMap = new Map(target.map((c, i) => [c.id, i + 1]));
+    const nextI = index.map((c) =>
+      posMap.has(c.id)
+        ? { ...c, suiteId: c.id === caseId ? suiteId : c.suiteId, position: posMap.get(c.id) }
+        : c
+    );
+    setIndex(nextI);
+    persistMeta(suites, nextI);
+    if (tc?.id === caseId) setTc((p) => ({ ...p, suiteId }));
+    setAllCases((p) => (p && p[caseId] ? { ...p, [caseId]: { ...p[caseId], suiteId } } : p));
+    try {
+      await sSet("tc-positions", target.map((c, i) => ({ id: c.id, suiteId, position: i + 1 })));
+    } catch (err) {
+      console.error("Premestanje nije uspelo:", err);
+    }
+  };
   const [newSuiteName, setNewSuiteName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [view, setView] = useState("editor"); // "editor" | "table"
@@ -368,8 +412,9 @@ export default function QATestCaseTool() {
       seq = nextSeqFallback();
     }
     const fresh = emptyCase(suiteId, seq, userName.trim() || "nepoznat korisnik", task.trim() || null);
+    fresh.position = Math.max(0, ...index.filter((c) => c.suiteId === suiteId).map((c) => c.position ?? 0)) + 1;
     await sSet(`tc-case-${fresh.id}`, fresh);
-    const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [], priority: fresh.priority, caseType: fresh.caseType }];
+    const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [], priority: fresh.priority, caseType: fresh.caseType, position: fresh.position }];
     setIndex(nextI); persistMeta(suites, nextI);
     setSelectedId(fresh.id); setTc(fresh);
   };
@@ -504,7 +549,8 @@ export default function QATestCaseTool() {
     );
   }
 
-  const casesBySuite = (suiteId) => index.filter((c) => c.suiteId === suiteId);
+  const byPos = (a, b) => (a.position ?? 0) - (b.position ?? 0);
+  const casesBySuite = (suiteId) => index.filter((c) => c.suiteId === suiteId).sort(byPos);
   const stat = (key) => index.filter((c) => c.status === key).length;
 
   return (
@@ -614,7 +660,22 @@ export default function QATestCaseTool() {
             const isCol = collapsed.has(s.id) && !needle; // pretraga gleda i kroz skupljene
             return (
             <div key={s.id} className="mb-1">
-              <div className="group flex items-center px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <div
+                onDragOver={canEdit ? (e) => { e.preventDefault(); setDragOverSuite(s.id); } : undefined}
+                onDragLeave={canEdit ? () => setDragOverSuite((p) => (p === s.id ? null : p)) : undefined}
+                onDrop={canEdit ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/tc-id"); if (id) moveCase(id, s.id); } : undefined}
+                className={`group flex items-center px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 rounded-md transition-colors ${
+                  dragOverSuite === s.id ? "bg-indigo-100 ring-1 ring-indigo-300" : ""}`}>
+                {renamingSuite?.id === s.id ? (
+                  <input autoFocus value={renamingSuite.name}
+                    onChange={(e) => setRenamingSuite({ id: s.id, name: e.target.value })}
+                    onBlur={() => renameSuite(s.id, renamingSuite.name)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") renameSuite(s.id, renamingSuite.name);
+                      if (e.key === "Escape") setRenamingSuite(null);
+                    }}
+                    className="flex-1 min-w-0 text-xs font-semibold uppercase bg-white border border-indigo-300 rounded px-2 py-1 outline-none" />
+                ) : (
                 <button onClick={() => toggleCollapse(s.id)}
                   className="flex items-center gap-1 min-w-0 flex-1 text-left hover:text-slate-700"
                   title={isCol ? "Expand" : "Collapse"}>
@@ -625,9 +686,14 @@ export default function QATestCaseTool() {
                     <span className="ml-1 font-mono text-[10px] text-slate-400 normal-case">({vis.length})</span>
                   )}
                 </button>
+                )}
+                {canEdit && renamingSuite?.id !== s.id && (
+                <button onClick={() => setRenamingSuite({ id: s.id, name: s.name })} title="Rename suite"
+                  className="ml-auto opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-600 p-1"><Pencil size={12} /></button>
+                )}
                 {canEdit && (
                 <button onClick={() => addCase(s.id)} title="Add test case"
-                  className="ml-auto opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-800 p-1"><Plus size={14} /></button>
+                  className="opacity-0 group-hover:opacity-100 text-indigo-600 hover:text-indigo-800 p-1"><Plus size={14} /></button>
                 )}
                 {canEdit && (
                 <button onClick={() => deleteSuite(s.id)} title={confirmDelete === `suite-${s.id}` ? "Click again to delete" : "Delete suite"}
@@ -639,7 +705,13 @@ export default function QATestCaseTool() {
               {!isCol && vis.map((c) => (
                 <button key={c.id} onClick={() => openCase(c.id)}
                   title={`${c.caseId} — ${c.title || "Untitled"}`}
+                  draggable={canEdit}
+                  onDragStart={(e) => { e.dataTransfer.setData("text/tc-id", c.id); e.dataTransfer.effectAllowed = "move"; }}
+                  onDragOver={canEdit ? (e) => { e.preventDefault(); e.stopPropagation(); setDragOverCase(c.id); } : undefined}
+                  onDragLeave={canEdit ? () => setDragOverCase((p) => (p === c.id ? null : p)) : undefined}
+                  onDrop={canEdit ? (e) => { e.preventDefault(); e.stopPropagation(); const id = e.dataTransfer.getData("text/tc-id"); if (id) moveCase(id, c.suiteId, c.id); } : undefined}
                   className={`w-full flex items-center gap-2 px-4 py-2 text-left text-sm border-l-2 transition-colors ${
+                    dragOverCase === c.id ? "shadow-[inset_0_2px_0_0_#6366f1] " : ""}${canEdit ? "cursor-grab active:cursor-grabbing " : ""}${
                     selectedId === c.id ? "border-indigo-600 bg-indigo-50/60" : "border-transparent hover:bg-slate-50"}`}>
                   <span className={`w-2 h-2 rounded-full shrink-0 ${STATUSES[c.status]?.dot || "bg-slate-300"}`} />
                   <span className="font-mono text-xs text-slate-400 shrink-0">{c.caseId}</span>
@@ -1048,7 +1120,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     const groups = suites
       .map((s) => ({
         suite: s,
-        cases: index.filter((c) => c.suiteId === s.id).filter(passes)
+        cases: index.filter((c) => c.suiteId === s.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).filter(passes)
           .map((c) => allCases[c.id]).filter(Boolean),
       }))
       .filter((g) => g.cases.length > 0);
@@ -1173,6 +1245,14 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
           <span className="flex items-start gap-1.5">
             <span className="font-mono text-slate-500 shrink-0">{i + 1}.</span>
             <span className="flex-1"><Linkified text={st.action} /></span>
+          </span>
+        </td>;
+      case "testData":
+        return <td key={col.key} className={cls}><Linkified text={st.testData || (i === 0 ? c.testData : "")} /></td>;
+      case "expected":
+        return <td key={col.key} className={cls}>
+          <span className="flex items-start gap-1.5">
+            <span className="flex-1"><Linkified text={st.expected} /></span>
             {st.image && (
               <button
                 onMouseEnter={(e) => onShowPreview(e, st.imageUrl || st.image)}
@@ -1185,10 +1265,6 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             )}
           </span>
         </td>;
-      case "testData":
-        return <td key={col.key} className={cls}><Linkified text={st.testData || (i === 0 ? c.testData : "")} /></td>;
-      case "expected":
-        return <td key={col.key} className={cls}><Linkified text={st.expected} /></td>;
       default:
         return null;
     }
@@ -1355,7 +1431,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
               </tr>
             )}
             {suites.map((s) => {
-              const rows = index.filter((c) => c.suiteId === s.id).filter(passes);
+              const rows = index.filter((c) => c.suiteId === s.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).filter(passes);
               if (rows.length === 0) return null;
               const isCollapsed = collapsed.has(s.id) && !q.trim() && !taskQ.trim(); // pretraga/task gledaju i kroz skupljene
               return [
@@ -1506,12 +1582,12 @@ function PrintReport({ groups }) {
                     {c.steps.map((st, i) => (
                       <tr key={st.id}>
                         <td style={{ fontFamily: "monospace" }}>{i + 1}</td>
+                        <td>{st.action || "—"}</td>
+                        <td>{st.testData || "—"}</td>
                         <td>
-                          {st.action || "—"}
+                          {st.expected || "—"}
                           {imgSrc(st.image, st.imageUrl) && <img className="thumb" src={imgSrc(st.image, st.imageUrl)} alt="" />}
                         </td>
-                        <td>{st.testData || "—"}</td>
-                        <td>{st.expected || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
