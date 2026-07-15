@@ -99,7 +99,7 @@ const emptyCase = (suiteId, seq, by, task) => {
     postconditions: "",
     environment: [],
     notes: "",
-    steps: [{ id: uid(), action: "", testData: "", expected: "", image: null }],
+    steps: [{ id: uid(), action: "", testData: "", expected: "", mark: null, image: null }],
     actualResult: "",
     actualResultImages: [], // [{path, url?}] - url je izveden, ne cuva se
     task: task || null,
@@ -455,7 +455,7 @@ export default function QATestCaseTool() {
   // steps
   const setStep = (stepId, field, value) =>
     setTc((p) => ({ ...p, steps: p.steps.map((s) => (s.id === stepId ? { ...s, [field]: value } : s)) }));
-  const addStep = () => setTc((p) => ({ ...p, steps: [...p.steps, { id: uid(), action: "", testData: "", expected: "", image: null }] }));
+  const addStep = () => setTc((p) => ({ ...p, steps: [...p.steps, { id: uid(), action: "", testData: "", expected: "", mark: null, image: null }] }));
   const removeStep = (stepId) => {
     const victim = tc?.steps.find((s) => s.id === stepId);
     if (victim?.image) deleteScreenshot(victim.image);
@@ -855,9 +855,12 @@ export default function QATestCaseTool() {
                   <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Test Steps</p>
                   <p className="ml-auto text-xs text-slate-400">Screenshot: Ctrl+V directly into a step field</p>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {tc.steps.map((s, i) => (
-                    <div key={s.id} className="border border-slate-200 rounded-lg p-3 bg-slate-50/50">
+                    <div key={s.id} className={`border rounded-lg p-3 ${
+                      s.mark === "fail" ? "border-rose-300 bg-rose-50/40"
+                      : s.mark === "review" ? "border-amber-300 bg-amber-50/40"
+                      : "border-slate-200 bg-slate-50/50"}`}>
                       <div className="flex gap-3">
                         <div className="flex flex-col items-center gap-1 pt-1">
                           <span className="font-mono text-xs font-bold text-indigo-600 bg-indigo-50 rounded-md w-7 h-7 flex items-center justify-center">{i + 1}</span>
@@ -887,6 +890,20 @@ export default function QATestCaseTool() {
                             <ImageIcon size={16} />
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e, s.id)} />
                           </label>
+                          )}
+                          {(canEdit || s.mark === "fail") && (
+                          <button onClick={() => canEdit && setStep(s.id, "mark", s.mark === "fail" ? null : "fail")}
+                            disabled={!canEdit} title="Mark step as failed"
+                            className={`w-6 h-6 rounded-md border text-xs font-bold transition-colors ${
+                              s.mark === "fail" ? "bg-rose-100 text-rose-700 border-rose-300"
+                              : "bg-white text-slate-300 border-slate-200 hover:text-rose-500 hover:border-rose-300"}`}>✗</button>
+                          )}
+                          {(canEdit || s.mark === "review") && (
+                          <button onClick={() => canEdit && setStep(s.id, "mark", s.mark === "review" ? null : "review")}
+                            disabled={!canEdit} title="Mark step for consultation"
+                            className={`w-6 h-6 rounded-md border text-xs font-bold transition-colors ${
+                              s.mark === "review" ? "bg-amber-100 text-amber-700 border-amber-300"
+                              : "bg-white text-slate-300 border-slate-200 hover:text-amber-500 hover:border-amber-300"}`}>?</button>
                           )}
                           {canEdit && (
                           <button onClick={() => removeStep(s.id)} className="text-slate-300 hover:text-rose-500 p-1" title="Delete step">
@@ -1243,7 +1260,12 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
       case "steps":
         return <td key={col.key} className={cls}>
           <span className="flex items-start gap-1.5">
-            <span className="font-mono text-slate-500 shrink-0">{i + 1}.</span>
+            <span className={`font-mono text-[10px] font-bold rounded px-1.5 py-0.5 leading-none shrink-0 mt-0.5 border ${
+              st.mark === "fail" ? "text-rose-700 bg-rose-50 border-rose-200"
+              : st.mark === "review" ? "text-amber-700 bg-amber-50 border-amber-200"
+              : "text-indigo-600 bg-indigo-50 border-indigo-100"}`}>
+              {i + 1}{st.mark === "fail" ? " ✗" : st.mark === "review" ? " ?" : ""}
+            </span>
             <span className="flex-1"><Linkified text={st.action} /></span>
           </span>
         </td>;
@@ -1457,7 +1479,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
                   const zebra = tcIdx % 2 === 1 ? "bg-slate-50" : "bg-white";
                   return steps.map((st, i) => {
                     // deblja linija na pocetku TC-a, tanja svetlija izmedju koraka
-                    const topCls = i === 0 ? "border-t-2 border-t-slate-300" : "border-t border-t-slate-200/60";
+                    const topCls = i === 0 ? "border-t-2 border-t-slate-300" : "border-t border-t-slate-200";
                     const rowCls = `${zebra} ${topCls}`;
                     return (
                       <tr key={`${c.id}-${st.id}`}>
@@ -1581,7 +1603,9 @@ function PrintReport({ groups }) {
                   <tbody>
                     {c.steps.map((st, i) => (
                       <tr key={st.id}>
-                        <td style={{ fontFamily: "monospace" }}>{i + 1}</td>
+                        <td style={{ fontFamily: "monospace", color: st.mark === "fail" ? "#be123c" : st.mark === "review" ? "#b45309" : undefined }}>
+                          {i + 1}{st.mark === "fail" ? " ✗" : st.mark === "review" ? " ?" : ""}
+                        </td>
                         <td>{st.action || "—"}</td>
                         <td>{st.testData || "—"}</td>
                         <td>
