@@ -78,6 +78,29 @@ async function withSignedUrls(c) {
   };
 }
 
+// potpisi slike za CELU listu TC-ova jednim pozivom (umesto po TC-u)
+async function withSignedUrlsBatch(cases) {
+  const all = [];
+  for (const c of cases) {
+    (c.steps || []).forEach((st) => { if (st.image && !st.image.startsWith("data:")) all.push(st.image); });
+    (c.actualResultImages || []).forEach((im) => { if (im.path && !im.path.startsWith("data:")) all.push(im.path); });
+  }
+  let urlMap = new Map();
+  const CHUNK = 500; // siguran komad za createSignedUrls
+  for (let i = 0; i < all.length; i += CHUNK) {
+    const slice = all.slice(i, i + CHUNK);
+    const { data } = await supabase.storage.from(BUCKET).createSignedUrls(slice, SIGNED_URL_TTL);
+    (data || []).forEach((d) => urlMap.set(d.path, d.signedUrl));
+  }
+  return cases.map((c) => ({
+    ...c,
+    steps: (c.steps || []).map((st) =>
+      st.image && !st.image.startsWith("data:") ? { ...st, imageUrl: urlMap.get(st.image) || null } : st),
+    actualResultImages: (c.actualResultImages || []).map((im) =>
+      im.path && !im.path.startsWith("data:") ? { ...im, url: urlMap.get(im.path) || null } : im),
+  }));
+}
+
 // pamti poslednji poznat status po slucaju, da bismo znali kada je
 // promena statusa (i samo tada upisali red u status_history)
 const lastStatus = new Map();
@@ -147,7 +170,9 @@ function caseToRow(c) {
 window.storage = {
   async get(key) {
     if (key === "tc-user") {
+      const _ta = performance.now();
       const { data: { user } } = await supabase.auth.getUser();
+      console.log(`[perf] auth.getUser (tc-user): ${Math.round(performance.now()-_ta)}ms`);
       const name = nameFromEmail(user?.email);
       if (!name) throw new Error("Key not found: " + key);
       // JSON.stringify jer komponenta vrednosti cita kroz JSON.parse
@@ -200,6 +225,45 @@ window.storage = {
         })),
       };
       return { key, value: JSON.stringify(meta), shared: true };
+    }
+
+    if (key === "tc-cases-all") {
+      // SVI TC-ovi + SVA istorija, u stranicama (Supabase vraca max 1000 redova/upitu)
+      const pageAll = async (table, cols, order) => {
+        const PAGE = 1000;
+        let out = [], from = 0;
+        for (;;) {
+          let q = supabase.from(table).select(cols).range(from, from + PAGE - 1);
+          if (order) q = q.order(order.col, { ascending: order.asc });
+          const { data, error } = await q;
+          if (error) throw error;
+          out = out.concat(data || []);
+          if (!data || data.length < PAGE) break;
+          from += PAGE;
+        }
+        return out;
+      };
+      const _t0 = performance.now();
+      const [rows, hist] = await Promise.all([
+        pageAll("test_cases", "*", null),
+        pageAll("status_history", "test_case_id,status,changed_by_name,changed_at,task",
+                { col: "changed_at", asc: false }),
+      ]);
+      console.log(`[perf] DB upiti (${(rows||[]).length} TC, ${(hist||[]).length} istorija): ${Math.round(performance.now()-_t0)}ms`);
+      // grupisi istoriju po TC-u (vec sortirana najnovije-prvo), max 20 po TC-u
+      const histByCase = new Map();
+      for (const h of hist || []) {
+        const arr = histByCase.get(h.test_case_id) || [];
+        if (arr.length < 20) { arr.push(h); histByCase.set(h.test_case_id, arr); }
+      }
+      (rows || []).forEach((r) => lastStatus.set(r.id, r.status));
+      const _t1 = performance.now();
+      const cases = await withSignedUrlsBatch(
+        (rows || []).map((r) => rowToCase(r, histByCase.get(r.id) || []))
+      );
+      console.log(`[perf] potpisivanje slika: ${Math.round(performance.now()-_t1)}ms`);
+      const map = Object.fromEntries(cases.map((c) => [c.id, c]));
+      return { key, value: JSON.stringify(map), shared: true };
     }
 
     if (key.startsWith("tc-case-")) {
@@ -295,6 +359,45 @@ window.storage = {
   },
 
   async delete(key) {
+    if (key === "tc-cases-all") {
+      // SVI TC-ovi + SVA istorija, u stranicama (Supabase vraca max 1000 redova/upitu)
+      const pageAll = async (table, cols, order) => {
+        const PAGE = 1000;
+        let out = [], from = 0;
+        for (;;) {
+          let q = supabase.from(table).select(cols).range(from, from + PAGE - 1);
+          if (order) q = q.order(order.col, { ascending: order.asc });
+          const { data, error } = await q;
+          if (error) throw error;
+          out = out.concat(data || []);
+          if (!data || data.length < PAGE) break;
+          from += PAGE;
+        }
+        return out;
+      };
+      const _t0 = performance.now();
+      const [rows, hist] = await Promise.all([
+        pageAll("test_cases", "*", null),
+        pageAll("status_history", "test_case_id,status,changed_by_name,changed_at,task",
+                { col: "changed_at", asc: false }),
+      ]);
+      console.log(`[perf] DB upiti (${(rows||[]).length} TC, ${(hist||[]).length} istorija): ${Math.round(performance.now()-_t0)}ms`);
+      // grupisi istoriju po TC-u (vec sortirana najnovije-prvo), max 20 po TC-u
+      const histByCase = new Map();
+      for (const h of hist || []) {
+        const arr = histByCase.get(h.test_case_id) || [];
+        if (arr.length < 20) { arr.push(h); histByCase.set(h.test_case_id, arr); }
+      }
+      (rows || []).forEach((r) => lastStatus.set(r.id, r.status));
+      const _t1 = performance.now();
+      const cases = await withSignedUrlsBatch(
+        (rows || []).map((r) => rowToCase(r, histByCase.get(r.id) || []))
+      );
+      console.log(`[perf] potpisivanje slika: ${Math.round(performance.now()-_t1)}ms`);
+      const map = Object.fromEntries(cases.map((c) => [c.id, c]));
+      return { key, value: JSON.stringify(map), shared: true };
+    }
+
     if (key.startsWith("tc-case-")) {
       const id = key.slice("tc-case-".length);
       // pre brisanja reda, pokupi i obrisi njegove slike iz bucketa

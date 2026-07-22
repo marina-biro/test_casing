@@ -224,23 +224,23 @@ export default function QATestCaseTool() {
   // prvi render još uvek ima prazan index, iako je meta upravo učitan.
   const cacheFreshRef = useRef(false); // da li allCases odgovara trenutnom indeksu
 
-  const openTable = async (items = index) => {
-    const list = Array.isArray(items) ? items : index;
-    setView("table");
-    // kes vazi ako imamo sve TC-ove iz indeksa -> prelaz je trenutan, bez mreze
-    const cached = allCasesRef.current;
-    const hit = cacheFreshRef.current && cached && list.every((c) => cached[c.id]);
-    if (hit) { setTableLoading(false); return; }
+  const prefetchAllCases = async () => {
     setTableLoading(true);
     try {
-      const entries = await Promise.all(
-        list.map(async (c) => [c.id, (cached && cached[c.id]) || await sGet(`tc-case-${c.id}`)])
-      );
-      setAllCases(Object.fromEntries(entries.filter(([, v]) => v)));
-      cacheFreshRef.current = true;
+      const map = await sGet("tc-cases-all"); // svi TC-ovi u par upita
+      if (map) { setAllCases(map); cacheFreshRef.current = true; }
     } finally {
       setTableLoading(false);
     }
+  };
+
+  const openTable = async (items = index) => {
+    const list = Array.isArray(items) ? items : index;
+    setView("table");
+    const cached = allCasesRef.current;
+    const hit = cacheFreshRef.current && cached && list.every((c) => cached[c.id]);
+    if (hit) { setTableLoading(false); return; } // kes svez -> trenutno
+    await prefetchAllCases(); // inace jedan batch, ne N poziva
   };
 
   // change status directly from the table (persists + records author/time)
@@ -326,7 +326,11 @@ export default function QATestCaseTool() {
   // ---------- initial load ----------
   useEffect(() => {
     (async () => {
+      const T = (label, t0) => console.log(`[perf] ${label}: ${Math.round(performance.now() - t0)}ms`);
+      const boot0 = performance.now();
+      const tMeta = performance.now();
       const [u, meta, tk, rl] = await Promise.all([sGet("tc-user"), sGet("tc-meta"), sGet("tc-task"), sGet("tc-role")]);
+      T("meta+user+task+role (paralelno)", tMeta);
       if (u) setUserName(u);
       if (tk) setTask(tk);
       const resolvedRole = rl || "viewer";
@@ -350,15 +354,24 @@ export default function QATestCaseTool() {
       // stigne da ih pregazi podrazumevanim stanjem
       const p = new URLSearchParams(window.location.search);
       setLoading(false);
-      setTimeout(() => {
-        if (!p.get("view") && !p.get("tc")) {
-          // Svi korisnici bez eksplicitnog linka slecu na tabelu.
-          openTable(loadedCases);
-        } else {
-          applyUrlRef.current(p, loadedCases);
-        }
-        urlAppliedRef.current = true; // od sada write-efekat sme da pise URL
-      }, 0);
+      urlAppliedRef.current = true;
+      // odredi pocetni prikaz odmah, bez cekanja punih TC-ova
+      if (p.get("view") === "table" || (!p.get("view") && !p.get("tc"))) {
+        setView("table");
+        if (p.get("status")) setStatusFilter(new Set(p.get("status").split(",").filter(Boolean)));
+        if (p.get("env")) setEnvFilter(new Set(p.get("env").split(",").filter(Boolean)));
+        if (p.get("priority")) setPriorityFilter(new Set(p.get("priority").split(",").filter(Boolean)));
+        if (p.get("type")) setTypeFilter(new Set(p.get("type").split(",").filter(Boolean)));
+        if (p.get("task")) setTaskQ(p.get("task"));
+        if (p.get("q")) setQ(p.get("q"));
+        // puni sadrzaj u pozadini: tabela je vec vidljiva iz meta podataka
+        const tPf = performance.now();
+        prefetchAllCases().then(() => { T("prefetch svih TC-ova", tPf); T("UKUPNO do punog", boot0); });
+      } else {
+        setView("editor");
+        const tcId = p.get("tc");
+        if (tcId) openCase(tcId);
+      }
     })();
   }, []);
 
@@ -1124,7 +1137,7 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
     if (envFilter !== null && !(c.environment || []).some((e) => envFilter.has(e))) return false;
     if (priorityFilter !== null && !priorityFilter.has(c.priority || "medium")) return false;
     if (typeFilter !== null && !typeFilter.has(c.caseType || "positive")) return false;
-    const full = allCases[c.id] || {};
+    const full = allCases?.[c.id] || c;
     if (taskQ.trim()) {
       const tn = taskQ.trim().toUpperCase();
       const hit = (full.task || "").toUpperCase().includes(tn) ||
@@ -1408,6 +1421,11 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
             </button>
           )}
         </div>
+        {loading && (
+          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+            <Save size={13} className="animate-pulse" /> loading details…
+          </span>
+        )}
         <button onClick={exportPdf}
           title="Export what currently passes the filters"
           className="text-xs border border-slate-200 bg-white rounded-lg px-3 py-1.5 text-slate-600 hover:border-indigo-300 flex items-center gap-1.5">
@@ -1484,8 +1502,8 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
                 </tr>,
                 ...(isCollapsed ? [] : [
                 rows.flatMap((row, tcIdx) => {
-                  const c = allCases[row.id];
-                  if (!c) return [];
+                  // pun TC ako je vec ucitan; u suprotnom lagani red iz indeksa (dok pozadina dopuni)
+                  const c = allCases?.[row.id] || row;
                   const steps = c.steps && c.steps.length > 0
                     ? c.steps
                     : [{ id: "none", action: "", testData: "", expected: "", image: null }];
