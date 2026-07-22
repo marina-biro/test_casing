@@ -182,6 +182,7 @@ export default function QATestCaseTool() {
   const [priorityFilter, setPriorityFilter] = useState(null);
   const [typeFilter, setTypeFilter] = useState(null);
   const [allCases, setAllCases] = useState(null); // {id: fullCase} for table view
+  const allCasesRef = useRef(null);
   const [tableLoading, setTableLoading] = useState(false);
   const [hoverPreview, setHoverPreview] = useState(null); // {src, x, y}
   const [sideQ, setSideQ] = useState("");
@@ -221,15 +222,22 @@ export default function QATestCaseTool() {
   // load all full cases when switching to table view
   // items parametar sprečava stale closure tokom inicijalnog učitavanja:
   // prvi render još uvek ima prazan index, iako je meta upravo učitan.
+  const cacheFreshRef = useRef(false); // da li allCases odgovara trenutnom indeksu
+
   const openTable = async (items = index) => {
-    const list = Array.isArray(items) ? items : index; // event ili bilo sta drugo -> index
+    const list = Array.isArray(items) ? items : index;
     setView("table");
+    // kes vazi ako imamo sve TC-ove iz indeksa -> prelaz je trenutan, bez mreze
+    const cached = allCasesRef.current;
+    const hit = cacheFreshRef.current && cached && list.every((c) => cached[c.id]);
+    if (hit) { setTableLoading(false); return; }
     setTableLoading(true);
     try {
       const entries = await Promise.all(
-        list.map(async (c) => [c.id, await sGet(`tc-case-${c.id}`)])
+        list.map(async (c) => [c.id, (cached && cached[c.id]) || await sGet(`tc-case-${c.id}`)])
       );
       setAllCases(Object.fromEntries(entries.filter(([, v]) => v)));
+      cacheFreshRef.current = true;
     } finally {
       setTableLoading(false);
     }
@@ -259,6 +267,7 @@ export default function QATestCaseTool() {
 
   // ---------- URL <-> stanje: deljivi linkovi + browser Back ----------
   const urlAppliedRef = useRef(false); // dok je false, write-efekat ne dira URL
+  useEffect(() => { allCasesRef.current = allCases; }, [allCases]);
   const applyUrlRef = useRef(() => {});
   applyUrlRef.current = (savedParams, loadedCases) => {
     const p = savedParams || new URLSearchParams(window.location.search);
@@ -364,6 +373,7 @@ export default function QATestCaseTool() {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       await sSet(`tc-case-${tc.id}`, tc);
+      setAllCases((p) => (p ? { ...p, [tc.id]: tc } : p)); // kes ostaje svez
       setIndex((prev) => {
         const next = prev.map((c) =>
           c.id === tc.id ? { ...c, title: tc.title, caseId: tc.caseId, status: tc.status, suiteId: tc.suiteId, environment: tc.environment, priority: tc.priority, caseType: tc.caseType } : c
@@ -390,6 +400,7 @@ export default function QATestCaseTool() {
     setConfirmDelete(null);
     const doomed = index.filter((c) => c.suiteId === id);
     doomed.forEach((c) => sDel(`tc-case-${c.id}`));
+    setAllCases((p) => { if (!p) return p; const n = { ...p }; doomed.forEach((c) => delete n[c.id]); return n; });
     const nextS = suites.filter((s) => s.id !== id);
     const nextI = index.filter((c) => c.suiteId !== id);
     setSuites(nextS); setIndex(nextI); persistMeta(nextS, nextI);
@@ -414,6 +425,7 @@ export default function QATestCaseTool() {
     const fresh = emptyCase(suiteId, seq, userName.trim() || "nepoznat korisnik", task.trim() || null);
     fresh.position = Math.max(0, ...index.filter((c) => c.suiteId === suiteId).map((c) => c.position ?? 0)) + 1;
     await sSet(`tc-case-${fresh.id}`, fresh);
+    setAllCases((p) => (p ? { ...p, [fresh.id]: fresh } : p));
     const nextI = [...index, { id: fresh.id, suiteId, caseId: fresh.caseId, title: "", status: "created", environment: [], priority: fresh.priority, caseType: fresh.caseType, position: fresh.position }];
     setIndex(nextI); persistMeta(suites, nextI);
     setSelectedId(fresh.id); setTc(fresh);
@@ -429,6 +441,7 @@ export default function QATestCaseTool() {
     if (confirmDelete !== `case-${id}`) { setConfirmDelete(`case-${id}`); return; }
     setConfirmDelete(null);
     sDel(`tc-case-${id}`);
+    setAllCases((p) => { if (!p) return p; const n = { ...p }; delete n[id]; return n; });
     const nextI = index.filter((c) => c.id !== id);
     setIndex(nextI); persistMeta(suites, nextI);
     if (selectedId === id) { setTc(null); setSelectedId(null); }
