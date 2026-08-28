@@ -296,6 +296,35 @@ window.storage = {
       return { key, value, shared: false };
     }
 
+    if (key === "tc-import") {
+      // ceo import ide kroz jednu Postgres funkciju = jedna transakcija.
+      // Ako bilo koji red padne, baza ostaje netaknuta.
+      const { suites: newSuites = [], cases = [] } = JSON.parse(value);
+
+      const payload = {
+        suites: newSuites.map((s, i) => ({
+          id: s.id,
+          name: s.name,
+          position: s.position ?? i,
+        })),
+        // caseToRow vec radi camelCase -> snake_case i cisti imageUrl iz koraka;
+        // position racuna RPC, pa ga ne saljemo
+        cases: cases.map((c) => {
+          const row = caseToRow(c);
+          delete row.position;
+          return row;
+        }),
+      };
+
+      const { data, error } = await supabase.rpc("import_test_cases", { payload });
+      if (error) throw error;
+
+      // da sledeca promena statusa ispravno upise red u istoriju
+      (data?.cases || []).forEach((r) => lastStatus.set(r.id, r.status));
+
+      return { key, value: JSON.stringify(data), shared: true };
+    }
+
     if (key === "tc-positions") {
       // drag&drop: azurira samo suite_id + position za pogodjene TC-ove
       const rows = JSON.parse(value);

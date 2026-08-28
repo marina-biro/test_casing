@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
-  FolderPlus, X, Clock, User, Save, Check, Printer, Pencil
+  FolderPlus, X, Clock, User, Save, Check, Printer, Pencil, Upload
 } from "lucide-react";
 import { uploadScreenshot, deleteScreenshot } from "./storageShim.js";
+import ImportModal from "./ImportModal.jsx";
 
 // ---------- status config ----------
 const STATUSES = {
@@ -127,6 +128,7 @@ export default function QATestCaseTool() {
   const [lightbox, setLightbox] = useState(null);
   const [saved, setSaved] = useState(true);
   const [addingSuite, setAddingSuite] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [renamingSuite, setRenamingSuite] = useState(null); // {id, name}
   const [dragOverSuite, setDragOverSuite] = useState(null);
   const [dragOverCase, setDragOverCase] = useState(null);
@@ -444,6 +446,30 @@ export default function QATestCaseTool() {
     setSelectedId(fresh.id); setTc(fresh);
   };
 
+  // uvezeni slucajevi su vec u bazi - ovde se samo osvezava state
+  const handleImported = ({ suites: nextSuites, cases: newCases }) => {
+    setSuites(nextSuites);
+    setAllCases((p) =>
+      p ? { ...p, ...Object.fromEntries(newCases.map((c) => [c.id, c])) } : p
+    );
+    const nextI = [
+      ...index,
+      ...newCases.map((c) => ({
+        id: c.id,
+        suiteId: c.suiteId,
+        caseId: c.caseId,
+        title: c.title,
+        status: c.status,
+        environment: c.environment,
+        priority: c.priority,
+        caseType: c.caseType,
+        position: c.position,
+      })),
+    ];
+    setIndex(nextI);
+    persistMeta(nextSuites, nextI);
+  };
+
   const openCase = async (id) => {
     setSelectedId(id);
     const full = await sGet(`tc-case-${id}`);
@@ -656,6 +682,12 @@ export default function QATestCaseTool() {
                 <button onClick={() => { setAddingSuite(false); setNewSuiteName(""); }} className="text-slate-400 hover:text-slate-600 px-1" title="Cancel"><X size={15} /></button>
               </div>
             ))}
+            {canEdit && (
+              <button onClick={() => setImportOpen(true)}
+                className="w-full mt-2 flex items-center justify-center gap-2 text-xs font-medium text-slate-600 hover:text-indigo-700 border border-slate-200 hover:border-indigo-300 rounded-lg py-1.5 transition-colors">
+                <Upload size={13} /> Import CSV
+              </button>
+            )}
             <div className="relative mt-2">
               <input value={sideQ} onChange={(e) => setSideQ(e.target.value)}
                 placeholder="Search — ID, title, suite…"
@@ -1033,6 +1065,16 @@ export default function QATestCaseTool() {
 
       {/* lightbox */}
       {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      {importOpen && (
+        <ImportModal
+          suites={suites}
+          index={index}
+          userName={userName}
+          task={task}
+          onDone={handleImported}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
     </div>
   );
 }
