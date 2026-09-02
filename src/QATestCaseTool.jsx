@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
   Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon,
-  FolderPlus, X, Clock, User, Save, Check, Printer, Pencil, Upload
+  FolderPlus, X, Clock, User, Save, Check, Printer, Pencil, Upload, FileText
 } from "lucide-react";
 import { uploadScreenshot, deleteScreenshot } from "./storageShim.js";
 import ImportModal from "./ImportModal.jsx";
+import DocReview from "./DocReview.jsx";
 
 // ---------- status config ----------
 const STATUSES = {
@@ -129,6 +130,7 @@ export default function QATestCaseTool() {
   const [saved, setSaved] = useState(true);
   const [addingSuite, setAddingSuite] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [docOpen, setDocOpen] = useState(false);
   const [renamingSuite, setRenamingSuite] = useState(null); // {id, name}
   const [dragOverSuite, setDragOverSuite] = useState(null);
   const [dragOverCase, setDragOverCase] = useState(null);
@@ -688,6 +690,12 @@ export default function QATestCaseTool() {
                 <Upload size={13} /> Import CSV
               </button>
             )}
+            {canEdit && (
+              <button onClick={() => setDocOpen(true)}
+                className="w-full mt-1.5 flex items-center justify-center gap-2 text-xs font-medium text-slate-600 hover:text-indigo-700 border border-slate-200 hover:border-indigo-300 rounded-lg py-1.5 transition-colors">
+                <FileText size={13} /> Dokumentacija
+              </button>
+            )}
             <div className="relative mt-2">
               <input value={sideQ} onChange={(e) => setSideQ(e.target.value)}
                 placeholder="Search — ID, title, suite…"
@@ -1065,6 +1073,13 @@ export default function QATestCaseTool() {
 
       {/* lightbox */}
       {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
+      {docOpen && (
+        <DocReview
+          task={task}
+          userName={userName}
+          onClose={() => setDocOpen(false)}
+        />
+      )}
       {importOpen && (
         <ImportModal
           suites={suites}
