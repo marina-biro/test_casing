@@ -137,6 +137,10 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
       }
       setProposals(res.proposals);
       setDecisions({});
+      if (res.mode === "offline") {
+        setMessage("Offline režim: bez API ključa. Tekst zapisa je doslovan iz test case-a, "
+          + "a protivrečnosti sa postojećim zapisima se ne otkrivaju.");
+      }
       setPhase("review");
     } catch (e) {
       setError(e?.message || String(e));
