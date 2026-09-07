@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { X, Check, Pencil, RotateCcw, Loader2, FileText, AlertTriangle, Sparkles } from "lucide-react";
+import DocView from "./DocView.jsx";
 
 const REF_LABELS = {
   tables: "Tabele",
@@ -105,6 +106,7 @@ function RefChips({ refs, onEdit }) {
 // ============================================================================
 export default function DocReview({ area: initialArea, task, suiteIds, userName, onClose, onSaved }) {
   const [area, setArea] = useState(initialArea || AREAS[0]);
+  const [tab, setTab] = useState("proposals");   // proposals | document
   const [phase, setPhase] = useState("idle");   // idle | generating | review | saving | done
   const [proposals, setProposals] = useState([]);
   const [decisions, setDecisions] = useState({}); // id -> {action, text}
@@ -170,6 +172,7 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
       if (res?.error) throw new Error(res.error);
       setResult(res);
       setPhase("done");
+      setTab("document");   // odmah pokazi rezultat u dokumentu
       onSaved?.(res);
     } catch (e) {
       // transakcija je ponistena, dokument je nepromenjen
@@ -186,9 +189,20 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
         <div className="flex items-center gap-2 px-5 py-4 border-b border-slate-200">
           <FileText size={16} className="text-indigo-600" />
           <h2 className="text-sm font-semibold text-slate-800">Tehnička dokumentacija</h2>
-          <span className="text-xs text-slate-400">
-            {area}{task ? ` · ${task}` : ""}
-          </span>
+          <div className="flex items-center gap-0.5 ml-2 bg-slate-100 rounded-lg p-0.5">
+            {[["proposals", "Predlozi"], ["document", "Dokument"]].map(([k, label]) => (
+              <button key={k} onClick={() => setTab(k)}
+                className={`text-xs font-medium px-2.5 py-1 rounded-md transition-colors ${
+                  tab === k ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <select value={area} onChange={(e) => setArea(e.target.value)}
+            className="text-xs text-slate-500 border border-slate-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+            {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+          {task && <span className="text-xs text-slate-400 font-mono">{task}</span>}
           <button onClick={onClose} disabled={phase === "saving"}
             className="ml-auto text-slate-400 hover:text-slate-600 disabled:opacity-30">
             <X size={16} />
@@ -197,7 +211,9 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
 
-          {error && (
+          {tab === "document" && <DocView area={area} />}
+
+          {tab === "proposals" && error && (
             <div className="flex items-start gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-3">
               <AlertTriangle size={15} className="shrink-0 mt-0.5" />
               <div>
@@ -208,21 +224,14 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
             </div>
           )}
 
-          {message && (
+          {tab === "proposals" && message && (
             <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-3">
               {message}
             </p>
           )}
 
-          {phase === "idle" && (
+          {tab === "proposals" && phase === "idle" && (
             <div className="text-center py-8">
-              <div className="flex items-center justify-center gap-2 mb-5">
-                <span className="text-xs text-slate-500">Oblast</span>
-                <select value={area} onChange={(e) => setArea(e.target.value)}
-                  className="text-sm border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-200">
-                  {AREAS.map((a) => <option key={a} value={a}>{a}</option>)}
-                </select>
-              </div>
               <p className="text-sm text-slate-600 mb-1">
                 Čita test case-ove u statusu pass{task ? ` za ${task}` : ""} i predlaže izmene dokumentacije.
               </p>
@@ -236,13 +245,13 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
             </div>
           )}
 
-          {phase === "generating" && (
+          {tab === "proposals" && phase === "generating" && (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500">
               <Loader2 size={15} className="animate-spin" /> Čitam test case-ove…
             </div>
           )}
 
-          {(phase === "review" || phase === "saving") && proposals.map((p) => {
+          {tab === "proposals" && (phase === "review" || phase === "saving") && proposals.map((p) => {
             const d = decisions[p.id];
             const meta = KIND_META[p.kind] ?? KIND_META.new;
             const isEditing = editing === p.id;
@@ -328,7 +337,7 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
             );
           })}
 
-          {phase === "done" && result && (
+          {tab === "proposals" && phase === "done" && result && (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
               <p className="text-sm font-medium text-emerald-800 flex items-center gap-1.5">
                 <Check size={15} /> Dokumentacija sačuvana
@@ -342,7 +351,7 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
         </div>
 
         <div className="flex items-center gap-2 px-5 py-3 border-t border-slate-200">
-          {phase === "review" && (
+          {tab === "proposals" && phase === "review" && (
             <>
               <span className="text-xs text-slate-500">
                 {decided} / {proposals.length} odlučeno
@@ -364,7 +373,7 @@ export default function DocReview({ area: initialArea, task, suiteIds, userName,
             className="ml-auto text-sm text-slate-500 hover:text-slate-700 px-3 py-2 disabled:opacity-30">
             {phase === "done" ? "Zatvori" : "Odustani"}
           </button>
-          {phase === "review" && (
+          {tab === "proposals" && phase === "review" && (
             <button onClick={save} disabled={decided === 0}
               className="text-sm font-medium bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 transition-colors">
               Sačuvaj {decided}
