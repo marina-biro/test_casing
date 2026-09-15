@@ -53,6 +53,7 @@ const HEADER_ALIASES = {
   caseId:         ["case_id", "caseid", "id", "tc_id", "sifra"],
   title:          ["title", "naslov", "name", "naziv"],
   objective:      ["objective", "cilj", "svrha"],
+  businessDocumentation: ["business_documentation", "biznis_dokumentacija", "biznis_dokumentacia"],
   preconditions:  ["preconditions", "preduslovi", "preduslov"],
   testData:       ["test_data", "testdata", "testni_podaci", "podaci"],
   postconditions: ["postconditions", "postuslovi"],
@@ -180,6 +181,7 @@ function buildRows(parsed, existingCaseIds) {
       suite,
       title,
       objective: get("objective"),
+      businessDocumentation: get("businessDocumentation"),
       preconditions: get("preconditions"),
       testData: get("testData"),
       postconditions: get("postconditions"),
@@ -232,6 +234,7 @@ function rowsFromJson(arr, existingCaseIds) {
       suite: (o.suite || o.grupa || "Uvezeno").trim(),
       title,
       objective: o.objective || o.cilj || "",
+      businessDocumentation: o.businessDocumentation || o.biznis_dokumentacija || "",
       preconditions: o.preconditions || o.preduslovi || "",
       testData: o.testData || o.test_data || "",
       postconditions: o.postconditions || o.postuslovi || "",
@@ -322,6 +325,8 @@ export default function ImportModal({ suites, index, userName, task, onDone, onC
       caseId: keepIds && r.srcId ? r.srcId : "",
       title: r.title,
       objective: r.objective,
+      businessDocumentation: r.businessDocumentation || "",
+      businessDocumentationImages: [],
       preconditions: r.preconditions,
       testData: r.testData,
       postconditions: r.postconditions,
@@ -406,7 +411,7 @@ export default function ImportModal({ suites, index, userName, task, onDone, onC
               <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1.5">
                 <p className="font-semibold text-slate-600">Kolone koje se prepoznaju</p>
                 <p><span className="font-mono text-slate-700">title</span> je obavezna. Opciono:
-                  {" "}<span className="font-mono">suite, case_id, objective, preconditions, test_data,
+                  {" "}<span className="font-mono">suite, case_id, objective, business_documentation, preconditions, test_data,
                   postconditions, environment, notes, priority, case_type, status, steps, expected</span>.
                   Srpski nazivi rade takođe: naslov, grupa, preduslovi, koraci, ocekivano, prioritet, napomena.</p>
                 <p><span className="font-mono text-slate-700">steps</span>: jedan korak po redu unutar ćelije.

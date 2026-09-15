@@ -96,6 +96,8 @@ const emptyCase = (suiteId, seq, by, task) => {
     caseId: `TC_${String(seq).padStart(3, "0")}`,
     title: "",
     objective: "",
+    businessDocumentation: "",
+    businessDocumentationImages: [], // [{path, url?}] - max 3
     preconditions: "",
     testData: "",
     postconditions: "",
@@ -563,6 +565,38 @@ export default function QATestCaseTool() {
     await attachActualImage(item.getAsFile());
   };
 
+  const MAX_BIZ_DOC_IMAGES = 3;
+
+  const attachBizDocImage = async (file) => {
+    if (!file || (tc?.businessDocumentationImages || []).length >= MAX_BIZ_DOC_IMAGES) return;
+    const dataUrl = await resizeImage(file);
+    try {
+      const { path, url } = await uploadScreenshot(dataUrl);
+      setTc((p) => ({ ...p, businessDocumentationImages: [...(p.businessDocumentationImages || []), { path, url }] }));
+    } catch (err) {
+      console.error("Upload screenshota nije uspeo, cuvam base64:", err);
+      setTc((p) => ({ ...p, businessDocumentationImages: [...(p.businessDocumentationImages || []), { path: dataUrl, url: null }] }));
+    }
+  };
+
+  const removeBizDocImage = (path) => {
+    deleteScreenshot(path);
+    setTc((p) => ({ ...p, businessDocumentationImages: (p.businessDocumentationImages || []).filter((im) => im.path !== path) }));
+  };
+
+  const handleBizDocPaste = async (e) => {
+    const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
+    if (!item) return;
+    e.preventDefault();
+    await attachBizDocImage(item.getAsFile());
+  };
+
+  const handleBizDocFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) await attachBizDocImage(file);
+  };
+
   const handlePaste = async (e, stepId, field) => {
     const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
     if (item) {
@@ -911,6 +945,38 @@ export default function QATestCaseTool() {
                 </div>
               </div>
 
+              {/* biznis dokumentacija */}
+              <Field label="Biznis dokumentacija" hint="business context — up to 3 photos and text"
+                value={tc.businessDocumentation} onChange={(v) => setField("businessDocumentation", v)}
+                onPaste={canEdit ? handleBizDocPaste : undefined} readOnly={!canEdit}>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {(tc.businessDocumentationImages || []).map((im, i) => (
+                    <span key={im.path} className="inline-flex items-center gap-1">
+                      <button
+                        onMouseEnter={(e) => showPreview(e, im.url || im.path)}
+                        onMouseMove={(e) => showPreview(e, im.url || im.path)}
+                        onMouseLeave={hidePreview}
+                        onClick={() => { hidePreview(); setLightbox(im.url || im.path); }}
+                        className="flex items-center gap-1.5 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 rounded-md px-2 py-1">
+                        <ImageIcon size={13} /> photo {i + 1}
+                      </button>
+                      {canEdit && (
+                      <button onClick={() => removeBizDocImage(im.path)}
+                        className="text-slate-300 hover:text-rose-500 p-0.5" title="Remove photo">
+                        <X size={13} />
+                      </button>
+                      )}
+                    </span>
+                  ))}
+                  {canEdit && (tc.businessDocumentationImages || []).length < MAX_BIZ_DOC_IMAGES && (
+                    <label className="cursor-pointer flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 border border-dashed border-slate-300 hover:border-indigo-300 rounded-md px-2 py-1">
+                      <ImageIcon size={13} /> Add photo
+                      <input type="file" accept="image/*" className="hidden" onChange={handleBizDocFile} />
+                    </label>
+                  )}
+                </div>
+              </Field>
+
               {/* preconditions */}
               <Field label="Preconditions" hint="what must be in place before the test starts"
                 value={tc.preconditions} onChange={(v) => setField("preconditions", v)} readOnly={!canEdit} />
@@ -1118,6 +1184,7 @@ function Field({ label, hint, value, onChange, placeholder, onPaste, children, r
 const COLUMNS = [
   { key: "caseId",        name: "Test Case ID",    w: "w-28" },
   { key: "title",         name: "Test Case",       w: "min-w-[180px]" },
+  { key: "businessDocumentation", name: "Biznis dokumentacija", w: "min-w-[150px]" },
   { key: "preconditions", name: "Preconditions",   w: "min-w-[150px]" },
   { key: "steps",         name: "Test Steps",      w: "min-w-[240px]" },
   { key: "testData",      name: "Test Data",       w: "min-w-[160px]" },
@@ -1237,6 +1304,10 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         const au = im.url || (im.path?.startsWith("data:") ? im.path : null);
         if (au) urls.push(au);
       });
+      (c.businessDocumentationImages || []).forEach((im) => {
+        const bu = im.url || (im.path?.startsWith("data:") ? im.path : null);
+        if (bu) urls.push(bu);
+      });
     }));
     await Promise.all(urls.map((u) => new Promise((res) => {
       const im = new Image();
@@ -1267,6 +1338,26 @@ function TableView({ suites, index, allCases, loading, onStatusChange, onOpenCas
         </td>;
       case "title":
         return <td key={col.key} rowSpan={span} className={`${cls} font-medium text-slate-900`}>{c.title || "—"}</td>;
+      case "businessDocumentation":
+        return <td key={col.key} rowSpan={span} className={cls}>
+          <span className="flex items-start gap-1.5">
+            <span className="flex-1"><Linkified text={c.businessDocumentation} /></span>
+            {(c.businessDocumentationImages || []).length > 0 && (
+              <span className="flex flex-col gap-0.5 shrink-0">
+                {c.businessDocumentationImages.map((im) => (
+                  <button key={im.path}
+                    onMouseEnter={(e) => onShowPreview(e, im.url || im.path)}
+                    onMouseMove={(e) => onShowPreview(e, im.url || im.path)}
+                    onMouseLeave={onHidePreview}
+                    onClick={() => { onHidePreview(); onLightbox(im.url || im.path); }}
+                    className="text-indigo-500 hover:text-indigo-700" title="Photo — hover to preview">
+                    <ImageIcon size={13} />
+                  </button>
+                ))}
+              </span>
+            )}
+          </span>
+        </td>;
       case "preconditions":
         return <td key={col.key} rowSpan={span} className={cls}><Linkified text={c.preconditions} /></td>;
       case "actualResult":
@@ -1681,6 +1772,14 @@ function PrintReport({ groups }) {
               </div>
               {c.history?.[0]?.task && <p className="meta"><b>Task:</b> {c.history[0].task}</p>}
               {(c.environment || []).length > 0 && <p className="meta"><b>Environment:</b> {c.environment.join(", ")}</p>}
+              {(c.businessDocumentation || (c.businessDocumentationImages || []).length > 0) && (
+                <p className="meta"><b>Biznis dokumentacija:</b> {c.businessDocumentation || ""}
+                  {(c.businessDocumentationImages || []).map((im) => {
+                    const src = im.url || (im.path?.startsWith("data:") ? im.path : null);
+                    return src ? <img key={im.path} className="thumb" src={src} alt="" /> : null;
+                  })}
+                </p>
+              )}
               {c.preconditions && <p className="meta"><b>Preconditions:</b> {c.preconditions}</p>}
 
               {(c.steps || []).some((st) => st.action || st.expected || st.testData || st.image) && (
