@@ -513,6 +513,8 @@ export default function QATestCaseTool() {
     setTc((p) => ({ ...p, steps: p.steps.map((s) => (s.id === stepId ? { ...s, [field]: value } : s)) }));
   const addStep = () => setTc((p) => ({ ...p, steps: [...p.steps, { id: uid(), action: "", testData: "", expected: "", mark: null, image: null }] }));
   const removeStep = (stepId) => {
+    if (confirmDelete !== `step-${stepId}`) { setConfirmDelete(`step-${stepId}`); return; }
+    setConfirmDelete(null);
     const victim = tc?.steps.find((s) => s.id === stepId);
     if (victim?.image) deleteScreenshot(victim.image);
     setTc((p) => ({ ...p, steps: p.steps.filter((s) => s.id !== stepId) }));
@@ -998,6 +1000,12 @@ export default function QATestCaseTool() {
                           <span className="font-mono text-xs font-bold text-indigo-600 bg-indigo-50 rounded-md w-7 h-7 flex items-center justify-center">{i + 1}</span>
                           {canEdit && <button onClick={() => moveStep(i, -1)} className="text-slate-300 hover:text-slate-600"><ChevronUp size={14} /></button>}
                           {canEdit && <button onClick={() => moveStep(i, 1)} className="text-slate-300 hover:text-slate-600"><ChevronDown size={14} /></button>}
+                          {canEdit && (
+                          <button onClick={() => removeStep(s.id)} title={confirmDelete === `step-${s.id}` ? "Click again to delete" : "Delete step"}
+                            className={`mt-1 p-1 rounded-md ${confirmDelete === `step-${s.id}` ? "text-rose-600 bg-rose-50" : "text-slate-300 hover:text-rose-500"}`}>
+                            {confirmDelete === `step-${s.id}` ? <span className="text-[9px] font-bold">Sure?</span> : <Trash2 size={14} />}
+                          </button>
+                          )}
                         </div>
                         <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-2">
                           <textarea rows={2} readOnly={!canEdit} value={s.action}
@@ -1036,11 +1044,6 @@ export default function QATestCaseTool() {
                             className={`w-6 h-6 rounded-md border text-xs font-bold transition-colors ${
                               s.mark === "review" ? "bg-amber-100 text-amber-700 border-amber-300"
                               : "bg-white text-slate-300 border-slate-200 hover:text-amber-500 hover:border-amber-300"}`}>?</button>
-                          )}
-                          {canEdit && (
-                          <button onClick={() => removeStep(s.id)} className="text-slate-300 hover:text-rose-500 p-1" title="Delete step">
-                            <X size={15} />
-                          </button>
                           )}
                         </div>
                       </div>
