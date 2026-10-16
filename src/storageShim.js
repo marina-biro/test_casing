@@ -202,31 +202,6 @@ window.storage = {
     }
 
 
-    if (key.startsWith("doc-proposals-")) {
-      const area = key.slice("doc-proposals-".length);
-      const { data, error } = await supabase
-        .from("doc_proposals")
-        .select("id, kind, entry_id, section, proposed_text, current_text, proposed_refs, rationale, sources, task")
-        .eq("area", area)
-        .eq("resolution", "pending")
-        .order("created_at");
-      if (error) throw error;
-      return { key, value: JSON.stringify(data ?? []), shared: true };
-    }
-
-    if (key.startsWith("doc-entries-")) {
-      const area = key.slice("doc-entries-".length);
-      const { data, error } = await supabase
-        .from("doc_entries")
-        .select("id, section, text, refs, tasks, sources, version, position, updated_at, updated_by")
-        .eq("area", area)
-        .eq("status", "accepted")
-        .order("section")
-        .order("position");
-      if (error) throw error;
-      return { key, value: JSON.stringify(data ?? []), shared: true };
-    }
-
     if (key === "tc-role") {
       const { data: { user } } = await supabase.auth.getUser();
       let role = "viewer";
@@ -330,27 +305,6 @@ window.storage = {
     if (key === "tc-task") {
       await supabase.auth.updateUser({ data: { active_task: JSON.parse(value) } });
       return { key, value, shared: false };
-    }
-
-    if (key === "doc-generate") {
-      // Edge funkcija drzi ANTHROPIC_API_KEY kao secret; kljuc nikad ne dolazi
-      // u browser. Korisnikov JWT ide dalje, pa RLS vazi i u funkciji.
-      const body = JSON.parse(value);
-      const { data, error } = await supabase.functions.invoke("generate-doc", { body });
-      if (error) {
-        let detail = error.message;
-        try { detail = (await error.context?.json())?.error ?? detail; } catch {}
-        throw new Error(detail);
-      }
-      if (data?.error) throw new Error(data.error);
-      return { key, value: JSON.stringify(data), shared: true };
-    }
-
-    if (key === "doc-resolve") {
-      const payload = JSON.parse(value);
-      const { data, error } = await supabase.rpc("resolve_doc_proposals", { payload });
-      if (error) throw error;
-      return { key, value: JSON.stringify(data), shared: true };
     }
 
     if (key === "tc-import") {
