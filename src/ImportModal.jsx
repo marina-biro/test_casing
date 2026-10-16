@@ -1,20 +1,8 @@
 import { useState, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Upload, X, Check, AlertTriangle, FileText, Loader2 } from "lucide-react";
+import { STATUS_KEYS, PRIORITY_KEYS, CASE_TYPE_KEYS, ENVIRONMENTS, uid, now } from "./lib.js";
 
-// ---------- iste konstante kao u QATestCaseTool.jsx ----------
-const STATUS_KEYS = ["created", "not_executed", "pass", "fail", "review", "blocked"];
-const PRIORITY_KEYS = ["core", "medium", "edge"];
-const CASE_TYPE_KEYS = ["positive", "negative"];
-const ENVIRONMENTS = ["Chrome", "Firefox", "Safari", "Edge", "iPhone", "Android", "Tablet", "API"];
-
-const uid = () => crypto.randomUUID();
-const now = () => new Date().toISOString();
-
-const sGet = async (key) => {
-  try { const r = await window.storage.get(key); return r ? JSON.parse(r.value) : null; }
-  catch { return null; }
-};
 const sSet = async (key, val) => {
   const r = await window.storage.set(key, JSON.stringify(val));
   try { return r ? JSON.parse(r.value) : null; } catch { return null; }

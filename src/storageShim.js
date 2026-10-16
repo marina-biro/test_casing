@@ -62,7 +62,8 @@ async function withSignedUrls(c) {
     .filter((s) => s.image && !s.image.startsWith("data:"))
     .map((s) => s.image);
   const arPaths = (c.actualResultImages || []).map((im) => im.path).filter((p) => p && !p.startsWith("data:"));
-  const paths = [...stepPaths, ...arPaths];
+  const bizPaths = (c.businessDocumentationImages || []).map((im) => im.path).filter((p) => p && !p.startsWith("data:"));
+  const paths = [...stepPaths, ...arPaths, ...bizPaths];
   if (paths.length === 0) return c;
   const { data } = await supabase.storage.from(BUCKET).createSignedUrls(paths, SIGNED_URL_TTL);
   const urlMap = new Map((data || []).map((d) => [d.path, d.signedUrl]));
@@ -75,6 +76,8 @@ async function withSignedUrls(c) {
     ),
     actualResultImages: (c.actualResultImages || []).map((im) =>
       im.path && !im.path.startsWith("data:") ? { ...im, url: urlMap.get(im.path) || null } : im),
+    businessDocumentationImages: (c.businessDocumentationImages || []).map((im) =>
+      im.path && !im.path.startsWith("data:") ? { ...im, url: urlMap.get(im.path) || null } : im),
   };
 }
 
@@ -84,6 +87,7 @@ async function withSignedUrlsBatch(cases) {
   for (const c of cases) {
     (c.steps || []).forEach((st) => { if (st.image && !st.image.startsWith("data:")) all.push(st.image); });
     (c.actualResultImages || []).forEach((im) => { if (im.path && !im.path.startsWith("data:")) all.push(im.path); });
+    (c.businessDocumentationImages || []).forEach((im) => { if (im.path && !im.path.startsWith("data:")) all.push(im.path); });
   }
   let urlMap = new Map();
   const CHUNK = 500; // siguran komad za createSignedUrls
@@ -97,6 +101,8 @@ async function withSignedUrlsBatch(cases) {
     steps: (c.steps || []).map((st) =>
       st.image && !st.image.startsWith("data:") ? { ...st, imageUrl: urlMap.get(st.image) || null } : st),
     actualResultImages: (c.actualResultImages || []).map((im) =>
+      im.path && !im.path.startsWith("data:") ? { ...im, url: urlMap.get(im.path) || null } : im),
+    businessDocumentationImages: (c.businessDocumentationImages || []).map((im) =>
       im.path && !im.path.startsWith("data:") ? { ...im, url: urlMap.get(im.path) || null } : im),
   }));
 }
@@ -120,6 +126,8 @@ function rowToCase(row, historyRows) {
     caseId: row.case_id,
     title: row.title || "",
     objective: row.objective || "",
+    businessDocumentation: row.business_documentation || "",
+    businessDocumentationImages: (row.business_documentation_images || []).map((p) => ({ path: p, url: null })),
     preconditions: row.preconditions || "",
     testData: row.test_data || "",
     postconditions: row.postconditions || "",
@@ -148,6 +156,8 @@ function caseToRow(c) {
     case_id: c.caseId,
     title: c.title,
     objective: c.objective,
+    business_documentation: c.businessDocumentation,
+    business_documentation_images: (c.businessDocumentationImages || []).map((im) => im.path).filter(Boolean),
     preconditions: c.preconditions,
     test_data: c.testData,
     postconditions: c.postconditions,
